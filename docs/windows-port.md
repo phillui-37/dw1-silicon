@@ -155,3 +155,12 @@ jype0's jp_rev1 matching is itself in progress (most differ within the first ~75
 the battle overlays also around 0x4200). That is the baseline measurement Task 9 wanted;
 closing the gap is upstream decomp work, not port work. ISO identity for the record:
 SHA-1 edbd27984708df31190beeb9e68e5b511a3fe208, MD5 d874c79884da2e62e5b019fa7d2f15f2.
+## Bonus verification (2026-11-08 20:20 JST)
+
+The crew research (while chasing the mirror that turned out unneeded) pulled redump's public
+datfile: "CodeWarrior for PlayStation Release 4 (USA)" (disc 48799, serial D54041) has
+SHA-1 edbd27984708df31190beeb9e68e5b511a3fe208 / MD5 d874c79884da2e62e5b019fa7d2f15f2 over the
+raw 2352-byte image - EXACTLY our ISO's hashes. Our disc is a byte-perfect redump-verified copy;
+the earlier corruption claim is fully dead. For the record, if R4.1's compiler variant is ever
+needed for matching: archive.org/details/ps1_sdks "CodeWarrior for PlayStation updates.zip"
+contains CW_PSX_R4_Update.exe (9.4 MB), and the same item carries redump R3/R4/R5 discs.
