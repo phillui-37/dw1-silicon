@@ -56,21 +56,31 @@ fn rand_log() -> bool {
 
 #[inline(never)]
 fn log_rand_call(value: i32) {
-    unsafe extern "C" {
-        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
-        fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
-    }
     eprintln!(
         "dw1: rand {value:#06x} at vblank {}",
         crate::libetc::vblank_count()
     );
-    let mut frames = [std::ptr::null_mut(); 5];
-    unsafe {
-        let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
-        // Skip this function and dw1_bios_rand.
-        if n > 2 {
-            backtrace_symbols_fd(frames.as_ptr().add(2), (n - 2).min(2), 2);
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+            fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
         }
+        let mut frames = [std::ptr::null_mut(); 5];
+        unsafe {
+            let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
+            // Skip this function and dw1_bios_rand.
+            if n > 2 {
+                backtrace_symbols_fd(frames.as_ptr().add(2), (n - 2).min(2), 2);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // execinfo is a macOS libc extension; the standard library's backtrace prints the
+        // same callers.
+        let trace = std::backtrace::Backtrace::force_capture();
+        eprintln!("{trace}");
     }
 }
 

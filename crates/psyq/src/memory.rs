@@ -47,6 +47,7 @@ pub fn ps1_ram_ptr(addr: u32) -> *mut u8 {
 // buffers live (game globals, the heap arena and the PS1 RAM stand-in are all statics there;
 // docs/phase2-plan.md). Linking anything outside it stops the program.
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     // ld64 defines these for every segment of the image.
     #[link_name = "\u{1}segment$start$__DATA"]
@@ -59,6 +60,7 @@ unsafe extern "C" {
 pub const LINK_END: u32 = 0x00FF_FFFF;
 
 /// The address range packet links can reach: the app's `__DATA` segment.
+#[cfg(target_os = "macos")]
 pub fn link_window() -> (usize, usize) {
     let (start, end) = (&raw const DATA_START as usize, &raw const DATA_END as usize);
     // An offset must fit in 24 bits and never equal the end marker.
@@ -69,6 +71,70 @@ pub fn link_window() -> (usize, usize) {
     );
     (start, end)
 }
+
+/// The address range packet links can reach on Windows: COFF has no single data segment and
+/// no synthesised bounds, so the PE image's writable sections (the game statics, the overlay
+/// data groups and the PS1 RAM stand-in) are unioned by walking the image headers at runtime.
+/// Every page from the image's start down to (and including) `dw1_ps1_ram` is mapped, so the
+/// header walk cannot fault.
+#[cfg(windows)]
+pub fn link_window() -> (usize, usize) {
+    use std::sync::OnceLock;
+    static WINDOW: OnceLock<(usize, usize)> = OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        let anchor = (&raw const dw1_ps1_ram).cast::<u8>() as usize;
+        let mut base = anchor & !0xFFFF;
+        loop {
+            if unsafe { (base as *const u16).read_unaligned() } == 0x5A4D {
+                break;
+            }
+            base = base
+                .checked_sub(0x10000)
+                .expect("no PE header below dw1_ps1_ram");
+        }
+        let image = base as *const u8;
+        let pe = unsafe { image.add(image.add(0x3C).cast::<u32>().read_unaligned() as usize) };
+        assert_eq!(
+            unsafe { pe.cast::<u32>().read_unaligned() },
+            0x0000_4550,
+            "no PE signature"
+        );
+        let coff = unsafe { pe.add(4) };
+        let (n_sections, opt_size) = unsafe {
+            (
+                usize::from(coff.cast::<u16>().read_unaligned()),
+                usize::from(coff.add(16).cast::<u16>().read_unaligned()),
+            )
+        };
+        let sections = unsafe { coff.add(20 + opt_size) };
+        let (mut lo, mut hi) = (usize::MAX, 0usize);
+        for i in 0..n_sections {
+            let sh = unsafe { sections.add(i * 40) };
+            let (vsize, vaddr, chars) = unsafe {
+                (
+                    sh.add(8).cast::<u32>().read_unaligned() as usize,
+                    sh.add(12).cast::<u32>().read_unaligned() as usize,
+                    sh.add(36).cast::<u32>().read_unaligned(),
+                )
+            };
+            const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
+            if chars & IMAGE_SCN_MEM_WRITE != 0 && vsize > 0 {
+                lo = lo.min(base + vaddr);
+                hi = hi.max(base + vaddr + vsize);
+            }
+        }
+        assert!(lo != usize::MAX, "no writable sections in the PE image");
+        assert!(
+            hi - lo < LINK_END as usize,
+            "the writable sections span {:#x} bytes: too big for 24-bit packet links",
+            hi - lo
+        );
+        (lo, hi)
+    })
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+compile_error!("link_window is implemented for macOS and Windows only (ELF needs its own bounds)");
 
 /// The link to `ptr`. Stops the program if `ptr` is outside the window: a stack local or a host
 /// allocation can't be linked, and a truncated link would corrupt drawing silently.

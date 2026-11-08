@@ -31,19 +31,27 @@ pub fn unimplemented(name: &str) -> ! {
     let message =
         format!("psyq: unimplemented SDK call `{name}` (trapping stub; see crates/psyq/src/stubs.rs)");
     eprintln!("{message}");
-    // Which game code asked: walk the frame pointers (arm64 macOS always keeps them; Rust's
-    // own unwinder stops early in this panic=abort build) and print the callers' symbols.
-    unsafe extern "C" {
-        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
-        fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
-    }
-    let mut frames = [std::ptr::null_mut(); 12];
-    unsafe {
-        let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
-        // Skip this function and the stub.
-        if n > 2 {
-            backtrace_symbols_fd(frames.as_ptr().add(2), n - 2, 2);
+    // Which game code asked: on macOS, execinfo's symbolised frames; elsewhere the
+    // standard library's backtrace prints the same callers.
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+            fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
         }
+        let mut frames = [std::ptr::null_mut(); 12];
+        unsafe {
+            let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
+            // Skip this function and the stub.
+            if n > 2 {
+                backtrace_symbols_fd(frames.as_ptr().add(2), n - 2, 2);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let trace = std::backtrace::Backtrace::force_capture();
+        eprintln!("{trace}");
     }
     if let Some(hook) = STOP_HOOK.get() {
         hook(&message);

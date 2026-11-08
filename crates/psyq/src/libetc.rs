@@ -183,14 +183,34 @@ pub extern "C" fn PadRead(_id: i32) -> u32 {
 /// code), from the frame-pointer chain, which arm64 macOS always keeps.
 #[inline(never)]
 fn caller_address() -> usize {
-    unsafe extern "C" {
-        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+        }
+        // Not inlined: frame [0] returns into this function, [1] into PadRead and [2] into
+        // PadRead's caller (tests/pad_caller.rs).
+        let mut frames = [std::ptr::null_mut(); 3];
+        let n = unsafe { backtrace(frames.as_mut_ptr(), 3) };
+        if n >= 3 { frames[2] as usize } else { 0 }
     }
-    // Not inlined: frame [0] returns into this function, [1] into PadRead and [2] into
-    // PadRead's caller (tests/pad_caller.rs).
-    let mut frames = [std::ptr::null_mut(); 3];
-    let n = unsafe { backtrace(frames.as_mut_ptr(), 3) };
-    if n >= 3 { frames[2] as usize } else { 0 }
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn RtlCaptureStackBackTrace(
+                frames_to_skip: u32,
+                frames_to_capture: u32,
+                backtrace: *mut *mut std::ffi::c_void,
+                backtrace_hash: *mut u32,
+            ) -> u16;
+        }
+        // Same frame numbering as execinfo: [0] returns into this function, [1] into PadRead
+        // and [2] into PadRead's caller.
+        let mut frames = [std::ptr::null_mut(); 3];
+        let n = unsafe { RtlCaptureStackBackTrace(0, 3, frames.as_mut_ptr(), std::ptr::null_mut()) };
+        if n >= 3 { frames[2] as usize } else { 0 }
+    }
 }
 
 #[cfg(test)]
