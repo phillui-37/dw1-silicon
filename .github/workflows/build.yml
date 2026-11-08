@@ -1,7 +1,9 @@
 name: build
 
-# Runs on the project's own machine (a self-hosted Windows runner registered as
-# "self-hosted"/"windows"), not on GitHub-hosted runners.
+# Runs on the project's own machine (a self-hosted Windows runner), not GitHub-hosted
+# runners. The machine already carries the toolchain this project needs (rustup with the
+# nightly pinned by rust-toolchain.toml, LLVM/clang on PATH, Python 3 with PyYAML, CMake),
+# so the workflow does not install anything.
 on:
   push:
     branches: [windows-port, main]
@@ -23,8 +25,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Toolchain
+        run: |
+          rustc --version
+          cargo --version
+          clang --version
+          python --version
 
       - name: Build (${{ matrix.version }})
         env:
