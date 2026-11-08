@@ -17,8 +17,35 @@
 use std::fmt;
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
+
+/// Positional exact read: `read_exact_at` on Unix; a looped `seek_read` on Windows,
+/// which lacks the "exact" variant. EOF before the buffer fills is `UnexpectedEof`,
+/// matching the Unix trait method.
+#[cfg(unix)]
+fn read_exact_at(f: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    f.read_exact_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(f: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    let mut done = 0;
+    while done < buf.len() {
+        let n = f.seek_read(&mut buf[done..], offset + done as u64)?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read_exact_at: EOF before buffer filled",
+            ));
+        }
+        done += n;
+    }
+    Ok(())
+}
 
 /// Bytes in a raw sector.
 pub const RAW_SECTOR: usize = 2352;
@@ -208,8 +235,7 @@ impl Disc {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), DiscError> {
         match &self.source {
-            Source::File(f, path) => f
-                .read_exact_at(buf, offset)
+            Source::File(f, path) => read_exact_at(f, buf, offset)
                 .map_err(|e| DiscError::Io(path.clone(), e)),
             Source::Memory(m) => {
                 let start = offset as usize;
