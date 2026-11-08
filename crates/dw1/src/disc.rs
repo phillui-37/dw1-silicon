@@ -59,7 +59,7 @@ pub fn open_checked(path: &Path) -> Result<Disc, String> {
     let disc = open(path)?;
     // Reads the whole image once (about a second), so a wrong or damaged dump is caught here
     // and not as garbage in the game.
-    match disc.verify() {
+    match disc.verify_as(decomp_c::DW1_VERSION) {
         Ok(()) => Ok(disc),
         Err(pack::DiscError::Checksum { .. }) => Err(wrong_image(disc.boot_name().as_deref())),
         Err(e) => Err(format!("The image couldn't be read: {}.", describe(&e))),

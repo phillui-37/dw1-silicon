@@ -89,6 +89,16 @@ fn main() {
     // Overlay data sections are Mach-O named sections with ld64's synthesised bounds on
     // macOS, and `$`-ordered COFF groups with sentinel bounds on Windows (overlays.rs).
     let coff = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    // The decomp version target: picks the version's mk file, config, text and macro.
+    // Must match a `mk/version/<v>.mk`; pack::expected_sha1 covers its disc hash.
+    let version = std::env::var("DW1_VERSION").unwrap_or_else(|_| "us".into());
+    assert!(
+        ["us", "jp_rev1"].contains(&version.as_str()),
+        "DW1_VERSION={version}: only us and jp_rev1 are wired up"
+    );
+    let version_macro = format!("VERSION_{}", version.to_uppercase());
+    println!("cargo:rerun-if-env-changed=DW1_VERSION");
+    println!("cargo::rustc-env=DW1_VERSION={version}");
     if coff {
         // The setjmp/longjmp replacement calls vcruntime's _setjmp/_longjmp, and psyq's
         // caller_address uses kernel32's CaptureStackBackTrace; the Rust MSVC target
@@ -105,15 +115,18 @@ fn main() {
     );
     let python = python(&workspace);
     let generated = out.join("generated");
-    generate_text_headers(&decomp, &python, &generated);
+    generate_text_headers(&decomp, &python, &generated, &version);
 
-    let cpp_args = preprocessor_args(&[
-        &native_include,
-        &decomp.join("include"),
-        &psyq_include,
-        &generated,
-    ]);
-    let sources = c_sources(&decomp);
+    let cpp_args = preprocessor_args(
+        &[
+            &native_include,
+            &decomp.join("include"),
+            &psyq_include,
+            &generated,
+        ],
+        &version_macro,
+    );
+    let sources = c_sources(&decomp, &version);
     let objects_dir = out.join("sjis");
 
     let mut build = cc::Build::new();
@@ -173,8 +186,8 @@ fn main() {
     // through wrappers into a second archive (overlays.rs).
     let overlay_build_base = build.clone();
     let mut overlay_build = build.clone();
-    let overlay_data = overlays::overlay_data_files(&decomp);
-    let resident = overlays::resident_names(&decomp);
+    let overlay_data = overlays::overlay_data_files(&decomp, &version);
+    let resident = overlays::resident_names(&decomp, &version);
     let wrappers_dir = out.join("overlays");
     let mut overlay_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let texts: Vec<(PathBuf, String)> = sources
@@ -299,9 +312,9 @@ fn main() {
         decomp.join("include"),
         decomp.join("text"),
         decomp.join("tools/gen_text.py"),
-        decomp.join("mk/version/us.mk"),
-        decomp.join("config/us/overlay.ld"),
-        decomp.join("config/us/symbols.txt"),
+        decomp.join(format!("mk/version/{version}.mk")),
+        decomp.join(format!("config/{version}/overlay.ld")),
+        decomp.join(format!("config/{version}/symbols.txt")),
         psyq_include,
         native_include,
     ] {
@@ -316,13 +329,13 @@ fn main() {
 
 /// Preprocessor setup shared by the C compiler and bindgen, so the bindings describe the C
 /// exactly as it is compiled (including everything `dw1_native.h` changes).
-fn preprocessor_args(include_dirs: &[&Path]) -> Vec<String> {
+fn preprocessor_args(include_dirs: &[&Path], version_macro: &str) -> Vec<String> {
     let mut args: Vec<String> = include_dirs
         .iter()
         .map(|dir| format!("-I{}", dir.display()))
         .collect();
     args.extend([
-        "-DVERSION_US".into(),
+        format!("-D{version_macro}"),
         "-DLANGUAGE_C".into(),
         "-include".into(),
         include_dirs[0].join("dw1_native.h").display().to_string(),
@@ -330,33 +343,62 @@ fn preprocessor_args(include_dirs: &[&Path]) -> Vec<String> {
     args
 }
 
-/// The C files of every unit in `UNITS`, from the `<UNIT>_C_SRC := \` lists in `us.mk`, with
-/// their unit.
-fn c_sources(decomp: &Path) -> Vec<(&'static str, String)> {
-    let mk = fs::read_to_string(decomp.join("mk/version/us.mk")).unwrap();
+/// The mk text for `version` with its `include mk/version/<v>.mk` lines expanded (each file
+/// at most once): `jp_rev1.mk` is only `include mk/version/jp.mk` plus tweaks.
+fn mk_text(decomp: &Path, version: &str, seen: &mut Vec<String>) -> String {
+    let path = decomp.join(format!("mk/version/{version}.mk"));
+    let text = fs::read_to_string(&path).unwrap_or_else(|_| panic!("no mk/version/{version}.mk"));
+    let mut out = text.clone();
+    for line in text.lines() {
+        if let Some(inc) = line
+            .trim()
+            .strip_prefix("include mk/version/")
+            .and_then(|r| r.strip_suffix(".mk"))
+        {
+            if !seen.iter().any(|s| s == inc) {
+                seen.push(inc.to_string());
+                out.push_str(&mk_text(decomp, inc, seen));
+            }
+        }
+    }
+    out
+}
+
+/// The C files of every unit in `UNITS`, from the `<UNIT>_C_SRC := \` lists in the version's
+/// mk file, with their unit.
+fn c_sources(decomp: &Path, version: &str) -> Vec<(&'static str, String)> {
+    let mk_name = format!("mk/version/{version}.mk");
+    let mk = mk_text(decomp, version, &mut vec![version.to_string()]);
     let mut sources = Vec::new();
     for unit in UNITS {
         let header = format!("{unit}_C_SRC :=");
         let mut lines = mk.lines().skip_while(|l| !l.starts_with(&header));
-        assert!(lines.next().is_some(), "us.mk has no {header}");
+        assert!(lines.next().is_some(), "{mk_name} has no {header}");
         let before = sources.len();
         for line in lines {
             let file = line.trim().trim_end_matches('\\').trim();
             if file.is_empty() {
                 break;
             }
-            if !EXCLUDED.contains(&file) {
-                sources.push((*unit, file.to_string()));
+            // Some version mk files name per-version sources with make's $(VERSION).
+            let file = file.replace("$(VERSION)", version);
+            if !EXCLUDED.contains(&file.as_str()) {
+                sources.push((*unit, file));
             }
         }
         assert!(sources.len() > before, "us.mk lists no files for {unit}");
+    }
+    // Only the US unit list has src/main/sjis.c (its save screens); the native save seeding
+    // uses asciiToShiftJIS on every version, so it is compiled everywhere here.
+    if version != "us" && !sources.iter().any(|(_, f)| f == "src/main/sjis.c") {
+        sources.push(("MAIN", "src/main/sjis.c".into()));
     }
     sources
 }
 
 /// Runs the decomp's text generator for every `text/<dir>/<name>.yaml`, writing
-/// `<generated>/text/<dir>/<name>.h` for the US release.
-fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path) {
+/// `<generated>/text/<dir>/<name>.h` for the selected release.
+fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path, version: &str) {
     let text = decomp.join("text");
     for dir in fs::read_dir(&text).unwrap() {
         let dir = dir.unwrap().path();
@@ -373,7 +415,7 @@ fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path) {
             fs::create_dir_all(header.parent().unwrap()).unwrap();
             let status = Command::new(python)
                 .arg(decomp.join("tools/gen_text.py"))
-                .args(["us".as_ref(), yaml.as_os_str(), header.as_os_str()])
+                .args([version.as_ref(), yaml.as_os_str(), header.as_os_str()])
                 .status()
                 .unwrap_or_else(|e| panic!("running {}: {e} (set DW1_PYTHON)", python.display()));
             assert!(

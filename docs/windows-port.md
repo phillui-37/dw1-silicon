@@ -62,3 +62,19 @@ Result: `cargo test -p decomp-c` green (6 passed, 1 ignored = disc test without 
   initialised so the pragma reaches them; link.exe $-group ordering then gives the bounds.
 - link_window: PE walk had NumberOfSections read from the Machine field (34404 "sections" of .text
   bytes); fixed to coff+2. All 47 test suites green (`cargo test --workspace` exit 0).
+## Task 5 (2026-11-08 14:50 JST): DW1_VERSION=jp_rev1
+
+- pack: expected_sha1(version) map (us redump + our JP Rev 1 dump 1d10389d...) with verify_as;
+  disc.rs verifies against decomp_c::DW1_VERSION (compile-time env).
+- build.rs: DW1_VERSION parameterizes the mk file (with `include mk/version/*.mk` expansion;
+  jp_rev1.mk includes jp.mk), the VERSION_ macro, gen_text.py's release, the config overlay.ld
+  and symbols.txt, and rerun-if-changed. `$(VERSION)` in file names expands (file_table).
+- overlay.ld parser: the non-US scripts write `.o(.data .data.*)` (two patterns); the marker
+  dropped its trailing dot.
+- decomp (branch dw1-windows-port): native guards the US-only SAVE_TITLE_RESERVED and
+  dw1_text_width (per-version bodies: US glyph table vs fixed GLYPH_WIDTH), native
+  STD_getEntityIndex calls in the non-US intro paths (v0 fallback = the US-audited one),
+  and the merged adjacent PS1 arrays in std_bss_jp_rev1.c / vs_bss_jp_rev1.c that dw/std.h
+  and dw/vs.h expect of native builds. sjis.c compiles on every version for the native save
+  seeding.
+- `DW1_VERSION=jp_rev1 cargo test --workspace`: 47 suites, 0 failed. Default us build unchanged.

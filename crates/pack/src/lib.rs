@@ -60,6 +60,19 @@ const SUBMODE_FORM2: u8 = 0x20;
 /// SHA-1 of the redump image of Digimon World (USA)'s `.bin` (SLUS-01032).
 pub const REDUMP_SHA1: &str = "5611645da66183e30d11fb6c11a2784ff47e1fdb";
 
+/// SHA-1 of our JP Rev 1 `.bin` (SLPS-017.97; the `jp_rev1` decomp target). Recorded from
+/// this project's own dump — cross-check against redump when one is available.
+pub const JP_REV1_SHA1: &str = "1d10389deee8c9849136623785c256071f2f9473";
+
+/// The expected image SHA-1 for a decomp version target (`us`, `jp_rev1`), if known.
+pub fn expected_sha1(version: &str) -> Option<&'static str> {
+    match version {
+        "us" => Some(REDUMP_SHA1),
+        "jp_rev1" => Some(JP_REV1_SHA1),
+        _ => None,
+    }
+}
+
 #[derive(Debug)]
 pub enum DiscError {
     Io(PathBuf, io::Error),
@@ -287,8 +300,14 @@ impl Disc {
     /// Checks the image against the known redump ([`REDUMP_SHA1`]). Reads the whole image
     /// (~700 MB), so the app does it once at startup.
     pub fn verify(&self) -> Result<(), DiscError> {
+        self.verify_as("us")
+    }
+
+    /// Checks the image against the expected SHA-1 of a version target ([`expected_sha1`]).
+    /// An unknown version never verifies.
+    pub fn verify_as(&self, version: &str) -> Result<(), DiscError> {
         let found = self.sha1()?;
-        if found == REDUMP_SHA1 {
+        if expected_sha1(version).is_some_and(|expected| found == expected) {
             Ok(())
         } else {
             Err(DiscError::Checksum { found })
@@ -576,6 +595,13 @@ mod tests {
         ));
         let blank = Disc::from_memory(vec![0; RAW_SECTOR * 20]).unwrap();
         assert!(matches!(blank.find("\\X"), Err(DiscError::Iso(_))));
+    }
+
+    #[test]
+    fn expected_sha1_covers_both_versions_and_rejects_unknown() {
+        assert_eq!(expected_sha1("us"), Some(REDUMP_SHA1));
+        assert_eq!(expected_sha1("jp_rev1"), Some(JP_REV1_SHA1));
+        assert_eq!(expected_sha1("kiosk"), None);
     }
 
     #[test]

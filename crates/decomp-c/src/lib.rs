@@ -7,6 +7,9 @@ use psyq as _;
 
 pub mod overlays;
 
+/// The decomp version target this build compiles (`DW1_VERSION`, default `us`).
+pub const DW1_VERSION: &str = env!("DW1_VERSION");
+
 #[allow(
     non_camel_case_types,
     non_snake_case,

@@ -64,22 +64,23 @@ pub fn coff_roots(unit: &str) -> (String, String) {
     (format!(".d{u}"), format!(".z{u}"))
 }
 
-/// The C files whose `.data` `overlay.ld` places in an overlay (`src/....c.o(.data.*)`).
-pub fn overlay_data_files(decomp: &Path) -> BTreeSet<String> {
-    let ld = fs::read_to_string(decomp.join("config/us/overlay.ld")).unwrap();
+/// The C files whose `.data` `overlay.ld` places in an overlay (`src/....c.o(.data.*)`; the
+/// non-US scripts list two patterns, `.o(.data .data.*)`).
+pub fn overlay_data_files(decomp: &Path, version: &str) -> BTreeSet<String> {
+    let ld = fs::read_to_string(decomp.join(format!("config/{version}/overlay.ld"))).unwrap();
     ld.lines()
         .filter_map(|l| {
             let start = l.find("BUILD_DIR/")? + "BUILD_DIR/".len();
             let rest = &l[start..];
-            let end = rest.find(".o(.data.")?;
+            let end = rest.find(".o(.data")?;
             Some(rest[..end].to_string())
         })
         .collect()
 }
 
 /// Names the main symbol list (config/us/symbols.txt) places in the main executable.
-pub fn resident_names(decomp: &Path) -> BTreeSet<String> {
-    let text = fs::read_to_string(decomp.join("config/us/symbols.txt")).unwrap();
+pub fn resident_names(decomp: &Path, version: &str) -> BTreeSet<String> {
+    let text = fs::read_to_string(decomp.join(format!("config/{version}/symbols.txt"))).unwrap();
     text.lines()
         .filter_map(|l| {
             let (name, rest) = l.split_once('=')?;
