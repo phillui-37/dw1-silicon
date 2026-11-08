@@ -1,11 +1,13 @@
 # dw1-silicon
 
-A native Apple Silicon port of **Digimon World** (PlayStation, 1999; USA release
-SLUS-01032) for macOS.
+A native port of **Digimon World** (PlayStation, 1999; USA release SLUS-01032) for
+**Windows**, **Linux** and **macOS**, through [wgpu](https://wgpu.rs): Metal on a Mac, Vulkan
+on Windows and Linux, DX12 as Windows' fallback. The default decomp target is the US
+release; `DW1_VERSION=jp_rev1` builds the JP Rev 1 target instead.
 
 It isn't an emulator. The game's own code, recovered as C by the
-[dw_decomp](https://github.com/jype0/dw_decomp) decompilation project, is compiled for arm64,
-and the PlayStation's libraries and hardware underneath it are replaced by a Mac layer
+[dw_decomp](https://github.com/jype0/dw_decomp) decompilation project, is compiled for the
+host, and the PlayStation's libraries and hardware underneath it are replaced by a host layer
 written in Rust. The game's rules, RNG, scripts, text, music and saves behave as on the
 original; improvements like higher resolution, no texture wobble and gamepad support are
 options, each labelled as original or added, with the original picture always available.
@@ -21,9 +23,12 @@ against the original game step by step. A first full playthrough is under way. S
 
 ## Building and playing
 
-You need a Mac with Apple Silicon, your own disc image of Digimon World (USA) as a `.cue`/`.bin`
-pair, Apple's command line tools (`xcode-select --install`) and Rust ([rustup](https://rustup.rs)).
-Then:
+You need a machine with a Vulkan or DX12 driver on Windows 10 or 11, Vulkan on Linux, or a Mac
+with Apple Silicon (Metal); your own disc image of Digimon World (USA) as a `.cue`/`.bin` pair;
+[Rust](https://rustup.rs) nightly; Python 3 with PyYAML, which the build runs; LLVM/clang on
+the `PATH` (the game's C is compiled with clang on every host); and CMake (SDL3 builds from
+source). On a Mac the command line tools come from `xcode-select --install`; on Windows and
+Linux your package manager has the rest. Then:
 
 ```sh
 git clone https://github.com/loafykitten/dw1-silicon.git
@@ -31,8 +36,12 @@ cd dw1-silicon
 git submodule update --init decomp
 git -C decomp submodule update --init external/psyq_headers
 python3 -m venv .venv && .venv/bin/pip install pyyaml cmake
-tools/make-app.sh --install    # Digimon World.app in ~/Applications
+tools/make-app.sh --install    # Digimon World.app in ~/Applications (macOS)
 ```
+
+`tools/make-app.sh` builds the Mac `.app`; on Windows and Linux `cargo build --release -p dw1`
+gives you `target/release/dw1` to run as it is (the venv's tools land in `.venv\Scripts` on
+Windows, `.venv/bin` elsewhere).
 
 The first start asks for your disc image. **[The guide](docs/guide.html)** (open it in a browser)
 covers installing the tools, controls, the picture settings, saves and moving them to and from
@@ -65,11 +74,20 @@ This port stands on other people's work:
   port's state and pictures against the original game.
 - **[psx-spx](https://psx-spx.consoledev.net/)** (nocash and contributors): the PlayStation
   hardware documentation.
-- **[splat](https://github.com/ethteck/splat)**, **[spimdisasm](https://github.com/Decompollaborate/spimdisasm)**
-  and **[rabbitizer](https://github.com/Decompollaborate/rabbitizer)**: the decompilation
-  tooling dw_decomp's build relies on.
+- **[splat](https://github.com/ethteck/splat)** by ethteck, and
+  **[Decompollaborate](https://github.com/Decompollaborate)**'s
+  [spimdisasm](https://github.com/Decompollaborate/spimdisasm) and
+  [rabbitizer](https://github.com/Decompollaborate/rabbitizer): the decompilation tooling
+  dw_decomp's build relies on.
 - **[mkpsxiso / dumpsxiso](https://github.com/Lameguy64/mkpsxiso)** by Lameguy64 and
   contributors: reading files from the disc image.
+- **[PsyCross](https://github.com/OpenDriver2/PsyCross)** by the OpenDriver2 project: a
+  platform-independent reimplementation of the Psy-Q SDK. A reference for what replacing the
+  PlayStation's libraries on a desktop takes, and for how the GTE and the GPU are modelled.
+- **[PSXRecomp](https://github.com/RetroPortingToolKit/psxrecomp)** and the
+  **[RetroPortingToolKit](https://github.com/RetroPortingToolKit)** ecosystem: the other way
+  to run these games natively, by static recompilation of the original executable. A
+  reference for how far a PS1 game's hardware layer has to be covered.
 
 ## License
 
