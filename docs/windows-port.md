@@ -78,3 +78,19 @@ Result: `cargo test -p decomp-c` green (6 passed, 1 ignored = disc test without 
   and dw/vs.h expect of native builds. sjis.c compiles on every version for the native save
   seeding.
 - `DW1_VERSION=jp_rev1 cargo test --workspace`: 47 suites, 0 failed. Default us build unchanged.
+## Task 6 (2026-11-08 15:05 JST): JP Rev 1 boots on Windows (Vulkan)
+
+`DW1_VERSION=jp_rev1 cargo build -p dw1 --bin dw1`, then run with `DW1_DISC` pointing at
+DigimonWorld (Japan) (Rev 1).cue:
+
+- The disc hash check passes (the 1d10389d... dump) and the game reads JP data from it:
+  "dw1: 4 of the save machine's memory card lines weren't found on this disc; they keep their
+  wording" (US save-machine lines absent on the JP disc, as expected).
+- Saves go to C:\Users\user\AppData\Roaming\dw1-silicon\saves (0 slots in use, first run).
+- The window opens (title "Digimon World (dw1-silicon)") and renders animated content for the
+  whole run (45 s+; screenshots in captures/windows-jp-boot: ~700 distinct colours, differing
+  between 30 s and 45 s). A headless run (`DW1_HEADLESS=1`) is likewise stable for 35 s+ with
+  no trap.
+
+Not yet verified: actual gameplay input (needs a human at the window), and which wgpu backend
+was selected (Vulkan vs DX12) - add a backend log line if wanted.
