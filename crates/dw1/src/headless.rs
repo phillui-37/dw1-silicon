@@ -118,6 +118,7 @@ impl Checkpoints {
 }
 
 /// The name of the function containing `addr` (the native game code is in this binary).
+#[cfg(target_os = "macos")]
 fn function_name(addr: usize) -> String {
     #[repr(C)]
     struct DlInfo {
@@ -144,6 +145,69 @@ fn function_name(addr: usize) -> String {
     unsafe { std::ffi::CStr::from_ptr(info.sname) }
         .to_string_lossy()
         .into_owned()
+}
+
+/// Same on Windows: dbghelp's `SymFromAddr` over this binary's own symbols. The module is
+/// initialised once; the debug build carries the symbol table, so replay reports name game
+/// functions as `dladdr` does on macOS.
+#[cfg(windows)]
+fn function_name(addr: usize) -> String {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct SymbolInfo {
+        size_of_struct: u32,
+        type_index: u32,
+        reserved: [u64; 2],
+        index: u32,
+        size: u32,
+        mod_base: u64,
+        flags: u32,
+        value: u64,
+        addr: u64,
+        register: u32,
+        scope: u32,
+        tag: u32,
+        name_len: u32,
+        max_name_len: u32,
+        name: [u8; 256],
+    }
+    #[link(name = "dbghelp")]
+    unsafe extern "system" {
+        fn SymInitialize(handle: *mut c_void, path: *const u16, invade: i32) -> i32;
+        fn SymFromAddr(handle: *mut c_void, addr: u64, displacement: *mut u64, sym: *mut SymbolInfo) -> i32;
+    }
+    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    INIT.get_or_init(|| unsafe {
+        // The current process, no search path, don't enumerate modules eagerly.
+        SymInitialize(-1isize as *mut c_void, std::ptr::null(), 0);
+    });
+    // A return address can sit just past a call at the very end of a function; look one
+    // byte back so it resolves to the caller (as the dladdr version does).
+    let mut sym = SymbolInfo {
+        size_of_struct: std::mem::size_of::<SymbolInfo>() as u32 - 256,
+        type_index: 0,
+        reserved: [0; 2],
+        index: 0,
+        size: 0,
+        mod_base: 0,
+        flags: 0,
+        value: 0,
+        addr: 0,
+        register: 0,
+        scope: 0,
+        tag: 0,
+        name_len: 0,
+        max_name_len: 256,
+        name: [0; 256],
+    };
+    let mut displacement = 0u64;
+    let found = unsafe {
+        SymFromAddr(-1isize as *mut c_void, (addr - 1) as u64, &mut displacement, &mut sym)
+    };
+    if found == 0 || sym.name_len == 0 {
+        return format!("{addr:#x}");
+    }
+    String::from_utf8_lossy(&sym.name[..sym.name_len as usize]).into_owned()
 }
 
 /// Removes the `ckpt_NNNN_*.bin/.txt` files an earlier run left in `out` (only those), so a

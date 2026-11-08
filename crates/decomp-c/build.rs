@@ -226,7 +226,49 @@ fn main() {
             let wrapper = wrappers_dir.join(rel);
             fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
             write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps, coff));
-            overlay_build.file(&wrapper);
+            if coff {
+                // On COFF, no pragma places the file's *uninitialised* globals in a chosen
+                // section (clang ignores `bss_seg`/`clang section bss` there), so the
+                // wrapper is compiled here and its `.bss` renamed into the overlay's `z`
+                // group with llvm-objcopy (turned into zero-filled data, matching the
+                // initialised data the pragmas did place). cc then archives the finished
+                // object unmodified.
+                let stem = Path::new(rel)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(['/', '\\'], "_");
+                let obj = out.join("ovl").join(format!("{}_{stem}.o", unit.to_lowercase()));
+                fs::create_dir_all(obj.parent().unwrap()).unwrap();
+                let status = Command::new(overlay_build_base.get_compiler().path())
+                    .args(["-c", "-o"])
+                    .arg(&obj)
+                    .arg(&wrapper)
+                    .args(&cpp_args)
+                    .args([
+                        "-O0",
+                        "-g",
+                        "-std=gnu99",
+                        "-fwrapv",
+                        "-fno-strict-aliasing",
+                        "-fno-common",
+                        "-fno-builtin",
+                        "-fsigned-char",
+                        "-fno-inline",
+                        "-fno-optimize-sibling-calls",
+                        "-fno-ms-compatibility",
+                        "-Wno-error=incompatible-pointer-types",
+                        "-Wno-error=implicit-function-declaration",
+                    ])
+                    .status()
+                    .unwrap_or_else(|e| panic!("compiling {rel}: {e}"));
+                assert!(status.success(), "compiling {rel} failed");
+                let zsec = format!(".z{}$d", unit.to_lowercase());
+                rename_coff_bss(&obj, &zsec).unwrap_or_else(|e| panic!("{rel}: {e}"));
+                overlay_build.object(&obj);
+            } else {
+                overlay_build.file(&wrapper);
+            }
             overlay_files.entry(unit.to_string()).or_default().push(rel.clone());
         } else {
             build.file(&file);
@@ -424,6 +466,47 @@ fn cp932_table(python: &Path, chars: impl Iterator<Item = char>) -> BTreeMap<cha
 fn unverbatim(p: PathBuf) -> PathBuf {
     let s = p.as_os_str().to_string_lossy().into_owned();
     PathBuf::from(s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s))
+}
+
+/// Renames a COFF object's `.bss` section header to `name` (at most 8 bytes, so it fits the
+/// inline header field) and turns the section into zero-filled initialised data: the linker
+/// refuses to mix the NOBITS `.bss` kind with the initialised `$a`/`$z` sentinels of the same
+/// group. llvm-objcopy cannot do this for COFF; symbols and relocations reference the
+/// section by index, which is untouched. An object without `.bss` is left alone.
+fn rename_coff_bss(obj: &Path, name: &str) -> Result<(), String> {
+    let name8 = name.as_bytes();
+    if name8.len() > 8 {
+        return Err(format!("section name `{name}` is over COFF's 8 bytes"));
+    }
+    let mut b = fs::read(obj).map_err(|e| format!("reading {}: {e}", obj.display()))?;
+    if b.len() < 20 {
+        return Err(format!("{}: not a COFF object", obj.display()));
+    }
+    let n_sections = u16::from_le_bytes([b[2], b[3]]) as usize;
+    for i in 0..n_sections {
+        let sh = 20 + i * 40;
+        if b[sh..sh + 4] == *b".bss" {
+            // IMAGE_SCN_CNT_UNINITIALIZED_DATA / _INITIALIZED_DATA.
+            const UNINIT: u32 = 0x0000_0080;
+            const INIT: u32 = 0x0000_0040;
+            let mut flags =
+                u32::from_le_bytes([b[sh + 36], b[sh + 37], b[sh + 38], b[sh + 39]]);
+            if flags & UNINIT != 0 {
+                let size = u32::from_le_bytes([b[sh + 16], b[sh + 17], b[sh + 18], b[sh + 19]])
+                    as usize;
+                let raw = b.len() as u32;
+                b.extend(std::iter::repeat(0u8).take(size));
+                b[sh + 20..sh + 24].copy_from_slice(&raw.to_le_bytes());
+                flags = (flags & !UNINIT) | INIT;
+                b[sh + 36..sh + 40].copy_from_slice(&flags.to_le_bytes());
+            }
+            b[sh..sh + 8].fill(0);
+            b[sh..sh + name8.len()].copy_from_slice(name8);
+            fs::write(obj, b).map_err(|e| format!("writing {}: {e}", obj.display()))?;
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// Writes `path` only when its contents change, so unchanged copies don't recompile.

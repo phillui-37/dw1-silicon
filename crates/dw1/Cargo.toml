@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 backend = { version = "0.1.0", path = "../backend" }
 decomp-c = { path = "../decomp-c" }
+dirs = "5"
 pack = { path = "../pack" }
 png = "0.17"
 psyq = { path = "../psyq" }

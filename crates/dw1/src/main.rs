@@ -40,6 +40,7 @@ fn open_disc() -> Result<pack::Disc, String> {
 /// pointers), so it doesn't depend on the system's stack walker, which finds nothing from an
 /// alternate stack on older macOS. Output uses only `write`, `backtrace_symbols_fd` (writes to
 /// the descriptor without allocating) and `_exit`.
+#[cfg(target_os = "macos")]
 fn install_crash_trace() {
     use std::ffi::c_void;
     #[repr(C)]
@@ -126,6 +127,56 @@ fn install_crash_trace() {
     }
 }
 
+/// The Windows counterpart of the crash trace: an unhandled-exception filter that prints the
+/// exception code, its address and the stack addresses (SEH runs on a normal thread, so the
+/// standard macros are safe here; the frame-pointer walk of the macOS handler has no
+/// equivalent that works without dbghelp's unwinder).
+#[cfg(windows)]
+fn install_crash_trace() {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct ExceptionRecord {
+        code: u32,
+        flags: u32,
+        record: *mut ExceptionRecord,
+        address: *mut c_void,
+        nparams: u32,
+        info: [*mut c_void; 15],
+    }
+    #[repr(C)]
+    struct ExceptionPointers {
+        record: *mut ExceptionRecord,
+        context: *mut c_void,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetUnhandledExceptionFilter(
+            filter: Option<unsafe extern "system" fn(*mut ExceptionPointers) -> i32>,
+        ) -> *mut c_void;
+        fn RtlCaptureStackBackTrace(
+            frames_to_skip: u32,
+            frames_to_capture: u32,
+            backtrace: *mut *mut c_void,
+            backtrace_hash: *mut u32,
+        ) -> u16;
+    }
+    unsafe extern "system" fn on_crash(x: *mut ExceptionPointers) -> i32 {
+        // EXCEPTION_EXECUTE_HANDLER: end the process after the filter.
+        const EXECUTE_HANDLER: i32 = 1;
+        let mut frames = [std::ptr::null_mut::<c_void>(); 32];
+        let n = unsafe {
+            RtlCaptureStackBackTrace(0, frames.len() as u32, frames.as_mut_ptr(), std::ptr::null_mut())
+        };
+        let (code, address) = unsafe { ((*(*x).record).code, (*(*x).record).address) };
+        eprintln!("dw1: fatal exception {code:#010x} at {address:p}; call stack:");
+        for f in &frames[..n as usize] {
+            eprintln!("  {f:p}");
+        }
+        EXECUTE_HANDLER
+    }
+    unsafe { SetUnhandledExceptionFilter(Some(on_crash)) };
+}
+
 /// Where the window build keeps the memory cards: `DW1_SAVE_DIR`, else
 /// [`default_save_dir`]; an empty `DW1_SAVE_DIR` keeps nothing.
 pub(crate) fn save_dir() -> Option<std::path::PathBuf> {
@@ -136,10 +187,15 @@ pub(crate) fn save_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-/// `~/Library/Application Support/dw1-silicon`.
+/// `~/Library/Application Support/dw1-silicon`; `%APPDATA%\dw1-silicon` on Windows,
+/// `$XDG_CONFIG_HOME/dw1-silicon` (via `dirs`) elsewhere.
 pub fn default_save_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME")
-        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/dw1-silicon"))
+    #[cfg(target_os = "macos")]
+    return std::env::var_os("HOME").map(|h| {
+        std::path::PathBuf::from(h).join("Library/Application Support/dw1-silicon")
+    });
+    #[cfg(not(target_os = "macos"))]
+    return dirs::config_dir().map(|d| d.join("dw1-silicon"));
 }
 
 /// The cards (Phase 7). Slot n's card is, in order: `card<n>.mcd` in the save directory when
@@ -212,9 +268,19 @@ fn insert_cards(keep: bool) {
 /// (`card1.mcd`, `card2.mcd`), else `DW1_CARD1`/`DW1_CARD2`; card 1's saves keep their slots.
 /// DuckStation's memory card 1 for Digimon World (USA), if it has one.
 fn duckstation_card() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let card = std::path::PathBuf::from(home)
-        .join("Library/Application Support/DuckStation/memcards/Digimon World (USA)_1.mcd");
+    #[cfg(target_os = "macos")]
+    let card = {
+        let home = std::env::var_os("HOME")?;
+        std::path::PathBuf::from(home)
+            .join("Library/Application Support/DuckStation/memcards/Digimon World (USA)_1.mcd")
+    };
+    #[cfg(windows)]
+    let card = dirs::document_dir()?.join(
+        "DuckStation/memcards/Digimon World (USA)_1.mcd",
+    );
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let card = dirs::config_dir()?
+        .join("duckstation/memcards/Digimon World (USA)_1.mcd");
     card.exists().then_some(card)
 }
 

@@ -49,3 +49,16 @@ Fixes beyond the plan, in the order they surfaced:
     (this SDK has no CaptureStackBackTrace export). kernel32.lib linked from build.rs.
 
 Result: `cargo test -p decomp-c` green (6 passed, 1 ignored = disc test without a disc).
+## Task 3-4 (2026-11-08 14:10 JST): full workspace builds and tests on Windows
+
+- render: wgpu backends per platform (mac: metal; windows: vulkan+dx12; linux: vulkan) - target tables in Cargo.toml (792ee0b, delegated).
+- dw1: dirs-based config/data paths, DuckStation card per OS, UCRT _open_osfhandle/_dup2 stdout/stderr redirect,
+  SetUnhandledExceptionFilter crash trace, dbghelp SymFromAddr function_name, main-thread capture for message boxes.
+- psyq/dw1: directory fsync skipped on Windows (FlushFileBuffers: access denied on dirs).
+- Overlays on COFF, final mechanism: `data_seg` pragma places initialised data in `.d{u}$d`;
+  the wrapper objects are compiled in build.rs and their `.bss` section header is patched in place
+  (rename to `.z{u}$d` + converted to zero-filled PROGBITS, because llvm-objcopy cannot rename COFF
+  sections and no pragma places uninitialised globals on COFF); sentinels in `$a`/`$z` are
+  initialised so the pragma reaches them; link.exe $-group ordering then gives the bounds.
+- link_window: PE walk had NumberOfSections read from the Machine field (34404 "sections" of .text
+  bytes); fixed to coff+2. All 47 test suites green (`cargo test --workspace` exit 0).

@@ -372,7 +372,17 @@ impl CardKeeper for SlotKeeper {
 }
 
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
-    std::fs::File::open(dir)?.sync_all()
+    // Windows refuses FlushFileBuffers on a directory handle (access denied); NTFS's own
+    // journaling carries the rename, so the call is skipped rather than failing every write.
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// Reads a memory card image (`.mcd`/`.mcr`, 128 KB).

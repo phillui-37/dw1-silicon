@@ -30,7 +30,10 @@ pub fn bundled() -> bool {
 }
 
 fn log_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Logs/dw1-silicon"))
+    #[cfg(target_os = "macos")]
+    return std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Logs/dw1-silicon"));
+    #[cfg(not(target_os = "macos"))]
+    return dirs::data_local_dir().map(|d| d.join("dw1-silicon/logs"));
 }
 
 /// Starts logging when bundled (or `DW1_LOG=1`); `interactive`: the window build (message
@@ -109,6 +112,7 @@ pub fn start(interactive: bool) -> Option<PathBuf> {
 }
 
 /// Stdout and stderr to `f` (the descriptors, so C code and the crash trace write there too).
+#[cfg(unix)]
 fn redirect(f: &std::fs::File) {
     use std::os::fd::AsRawFd;
     unsafe extern "C" {
@@ -118,6 +122,25 @@ fn redirect(f: &std::fs::File) {
     unsafe {
         dup2(f.as_raw_fd(), 1);
         dup2(f.as_raw_fd(), 2);
+    }
+}
+
+/// Same through the UCRT: the file's handle becomes a CRT descriptor, which then replaces
+/// stdout (1) and stderr (2), so C `printf` writes to the log as on macOS.
+#[cfg(windows)]
+fn redirect(f: &std::fs::File) {
+    use std::os::windows::io::AsRawHandle;
+    unsafe extern "C" {
+        fn _open_osfhandle(osfhandle: isize, flags: i32) -> i32;
+        fn _dup2(from: i32, to: i32) -> i32;
+    }
+    const O_WRONLY: i32 = 1;
+    // SAFETY: `f` is open for writing; its handle backs a descriptor that replaces 1 and 2
+    // for the rest of the run (the descriptor is never closed, like the dup above).
+    unsafe {
+        let fd = _open_osfhandle(f.as_raw_handle() as isize, O_WRONLY);
+        _dup2(fd, 1);
+        _dup2(fd, 2);
     }
 }
 
@@ -233,12 +256,33 @@ fn log_note() -> String {
 
 /// Whether this is the main thread: macOS shows windows (a message box too) only from there.
 /// A stop elsewhere is in the log, and the next start reports it.
+#[cfg(target_os = "macos")]
 fn on_main_thread() -> bool {
     unsafe extern "C" {
         fn pthread_main_np() -> i32;
     }
     // SAFETY: no arguments, no state.
     unsafe { pthread_main_np() != 0 }
+}
+
+/// Windows has no `pthread_main_np`; the main thread's id is captured at startup (`start`
+/// runs first on the main thread) and compared against the current one.
+#[cfg(windows)]
+fn on_main_thread() -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static MAIN_TID: AtomicU32 = AtomicU32::new(0);
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThreadId() -> u32;
+    }
+    let current = unsafe { GetCurrentThreadId() };
+    let seen = MAIN_TID.load(Ordering::Relaxed);
+    if seen == 0 {
+        // The first caller is on the main thread: `start` ran there before anything else.
+        MAIN_TID.store(current, Ordering::Relaxed);
+        return true;
+    }
+    current == seen
 }
 
 /// The message box for a stop (when logging: an app run, on the main thread), then back to

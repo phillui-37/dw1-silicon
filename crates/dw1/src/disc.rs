@@ -265,8 +265,11 @@ mod tests {
             "FILE \"other.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n",
         )
         .unwrap();
-        std::os::unix::fs::symlink(dir.join("other.cue"), dir.join("disc-link")).unwrap();
-        assert!(open(&dir.join("disc-link")).is_ok());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("other.cue"), dir.join("disc-link")).unwrap();
+            assert!(open(&dir.join("disc-link")).is_ok());
+        }
         // a read error names its cause before the file, not the whole path
         let e = pack::DiscError::Io(
             PathBuf::from("/Volumes/A Long Library/Games/x.bin"),
