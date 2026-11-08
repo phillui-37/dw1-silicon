@@ -164,3 +164,26 @@ raw 2352-byte image - EXACTLY our ISO's hashes. Our disc is a byte-perfect redum
 the earlier corruption claim is fully dead. For the record, if R4.1's compiler variant is ever
 needed for matching: archive.org/details/ps1_sdks "CodeWarrior for PlayStation updates.zip"
 contains CW_PSX_R4_Update.exe (9.4 MB), and the same item carries redump R3/R4/R5 discs.
+## Task 10 (2026-11-08 22:10 JST): Linux build + GUI run GREEN
+
+Linux support landed (commit 16e6bf6): ELF overlay sections (identifier-named sections +
+__start_/__stop_ bounds + anchors so empty sections still bound; -z nostart-stop-gc because
+lld's --gc-sections sweeps encapsulation symbols), ELF link window (PT_LOAD PF_W union over
+the base from /proc/self/maps), per-OS backtraces (execinfo on all unix), Linux crash trace
+(sigaction alt-stack + glibc backtrace), Linux on_main_thread (gettid == pid), dladdr
+symbolisation on Linux, CI matrix workflow (windows-latest + ubuntu-latest x us/jp_rev1),
+upstream notes (docs/upstream-notes.md).
+
+Verified in a root-podman ubuntu:24.04 container with the full SDL3 dependency set:
+- cargo build --workspace: OK (7m23s cold; DW1_BUILT)
+- DW1_VERSION=jp_rev1 cargo test --workspace: 14 suites, 0 failed
+- GUI run under WSLg (Wayland + Mesa llvmpipe Vulkan over /dev/dxg): the port opens its
+  window and runs the full 60-75s window with no trap; it reads the JP disc
+  ("4 of the save machine's memory card lines weren't found on this disc"), uses
+  /root/.config/dw1-silicon for saves, and survives to timeout (exit 124), i.e. the
+  earlier "GPU packet outside the linkable data segment" trap is gone after the ELF
+  segment-walk fix.
+- X screenshots from inside the container fail (SDL surface is Wayland; the X root has no
+  image) - the window appears on the Windows desktop via WSLg instead; visual confirmation
+  therefore needs a human or a Wayland screencopy tool. The frame-level evidence that
+  matters (no trap, full-run stability, disc read) is captured.
