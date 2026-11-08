@@ -1,20 +1,22 @@
 name: build
 
+# Runs on the project's own machine (a self-hosted Windows runner registered as
+# "self-hosted"/"windows"), not on GitHub-hosted runners.
 on:
   push:
     branches: [windows-port, main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: windows (${{ matrix.version }})
+    runs-on: [self-hosted, windows]
     env:
       CARGO_TERM_COLOR: always
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
         version: [us, jp_rev1]
     steps:
       - uses: actions/checkout@v4
@@ -23,17 +25,6 @@ jobs:
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
-
-      - name: Install Linux deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev python3-pip cmake pkg-config
-          python3 -m pip install --break-system-packages pyyaml
-
-      - name: Install Windows deps
-        if: runner.os == 'Windows'
-        run: python3 -m pip install pyyaml
 
       - name: Build (${{ matrix.version }})
         env:

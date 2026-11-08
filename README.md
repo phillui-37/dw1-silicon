@@ -88,6 +88,16 @@ This port stands on other people's work:
   **[RetroPortingToolKit](https://github.com/RetroPortingToolKit)** ecosystem: the other way
   to run these games natively, by static recompilation of the original executable. A
   reference for how far a PS1 game's hardware layer has to be covered.
+- **[mwccwrap](https://github.com/ThirstyWraith/mwccwrap)**, **[metrowrap](https://github.com/ThirstyWraith/metrowrap)**
+  and **[wibo](https://github.com/decompals/wibo)**: the Win32 shim chain that lets the
+  original CodeWarrior compiler plugin run on non-Windows hosts, used by dw_decomp's
+  byte-matching build (which this fork's CI also exercises).
+- **CodeWarrior for PlayStation** (Metrowerks): the original compiler, supplied by the
+  player from their own disc, only ever used for byte-match verification and never
+  redistributed.
+
+Thanks also to the reviewers and maintainers of the upstream projects above, whose
+comments and handoff notes (`PLAN.md`) shaped the Windows and Linux port in this fork.
 
 ## License
 
