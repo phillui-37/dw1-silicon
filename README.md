@@ -24,28 +24,140 @@ against the original game step by step. A first full playthrough is under way. S
 ## Building and playing
 
 You need a machine with a Vulkan or DX12 driver on Windows 10 or 11, Vulkan on Linux, or a Mac
-with Apple Silicon (Metal); your own disc image of Digimon World (USA) as a `.cue`/`.bin` pair;
-[Rust](https://rustup.rs) nightly; Python 3 with PyYAML, which the build runs; LLVM/clang on
-the `PATH` (the game's C is compiled with clang on every host); and CMake (SDL3 builds from
-source). On a Mac the command line tools come from `xcode-select --install`; on Windows and
-Linux your package manager has the rest. Then:
+with Apple Silicon (Metal); and your own disc image of Digimon World as a `.cue`/`.bin` pair.
+The default build targets the US release (SLUS-01032); set `DW1_VERSION=jp_rev1` to build the
+JP Rev 1 target (SLPS-017.97) instead.
+
+### Prerequisites
+
+| | Windows | Linux | macOS |
+|---|---|---|---|
+| Rust nightly | `winget install Rustlang.Rustup` then `rustup toolchain install nightly` | `curl -sSf https://sh.rustup.rs \| sh -s -- --default-toolchain nightly` | same |
+| C compiler (clang) | `scoop install llvm` (or download from [releases](https://github.com/llvm/llvm-project/releases)) | `sudo apt install clang libclang-dev` (Ubuntu) / `sudo dnf install clang clang-devel` (Fedora) | `xcode-select --install` |
+| Python 3 + PyYAML | `scoop install python; pip install pyyaml` | `sudo apt install python3 python3-pip; pip3 install pyyaml` | included |
+| CMake (for SDL3) | `scoop install cmake` | `sudo apt install cmake` | `brew install cmake` |
+| SDL3 deps | — (built from source, no extras needed) | `sudo apt install libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libdecor-0-dev libdrm-dev libgbm-dev libegl1-mesa-dev libgl1-mesa-dev libasound2-dev libpulse-dev libudev-dev libdbus-1-dev` | — |
+
+### Build (any platform)
 
 ```sh
-git clone https://github.com/loafykitten/dw1-silicon.git
+git clone https://github.com/phillui-37/dw1-silicon.git
 cd dw1-silicon
 git submodule update --init decomp
 git -C decomp submodule update --init external/psyq_headers
-python3 -m venv .venv && .venv/bin/pip install pyyaml cmake
-tools/make-app.sh --install    # Digimon World.app in ~/Applications (macOS)
 ```
 
-`tools/make-app.sh` builds the Mac `.app`; on Windows and Linux `cargo build --release -p dw1`
-gives you `target/release/dw1` to run as it is (the venv's tools land in `.venv\Scripts` on
-Windows, `.venv/bin` elsewhere).
+**macOS**:
 
-The first start asks for your disc image. **[The guide](docs/guide.html)** (open it in a browser)
-covers installing the tools, controls, the picture settings, saves and moving them to and from
-DuckStation, and what to do when something goes wrong.
+```sh
+python3 -m venv .venv && .venv/bin/pip install pyyaml cmake
+tools/make-app.sh --install    # Digimon World.app in ~/Applications
+```
+
+**Windows** (PowerShell):
+
+```powershell
+# set LLVM on PATH (adjust if installed elsewhere)
+$env:PATH = "$env:USERPROFILE\scoop\apps\llvm\current\bin;$env:PATH"
+$env:LIBCLANG_PATH = "$env:USERPROFILE\scoop\apps\llvm\current\bin"
+pip install pyyaml
+
+cargo build --workspace --release
+# binary at target\release\dw1.exe
+```
+
+**Linux**:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo build --workspace --release
+# binary at target/release/dw1
+```
+
+**JP Rev 1 build** (all platforms) — add the env var:
+
+```sh
+DW1_VERSION=jp_rev1 cargo build --workspace --release     # Linux/macOS
+```
+
+```powershell
+$env:DW1_VERSION = 'jp_rev1'; cargo build --workspace --release   # Windows
+```
+
+### Running
+
+Start the binary (double-click `dw1.exe` on Windows, or `./target/release/dw1` on Linux/macOS).
+The first start asks for your disc image in a file dialog, or set the environment variable
+`DW1_DISC=/path/to/DigimonWorld.cue` to skip the dialog. The image's hash is checked before
+the game starts.
+
+Options in play: **F2** render scale (auto from window size), **F3** no texture wobble
+(PGXP), **F4** fit-to-window, **F5** full colour, **F11** fullscreen, **F12** bug snapshot.
+Saves go to `%APPDATA%\dw1-silicon` (Windows), `~/.config/dw1-silicon` (Linux), or
+`~/Library/Application Support/dw1-silicon` (macOS), and are interchangeable with DuckStation
+memory cards.
+
+**[The guide](docs/guide.html)** (open it in a browser) covers installing the tools, controls,
+the picture settings, saves and moving them to and from DuckStation, and what to do when
+something goes wrong.
+
+## Community localization (i18n)
+
+The game's text lives in YAML files under `decomp/text/**/*.yaml`, already keyed per language:
+
+```yaml
+STAT_LABELS:
+  entries:
+    - name: STR_STAT_LABEL_HP
+      ja: 最大ＨＰ          # Japanese (the original)
+      en_us: HP             # English (US release)
+      zh_hant: 体力         # Traditional Chinese (POC)
+```
+
+To add or change a language:
+
+1. **Add your language key** to the YAML entries. The key is any name that isn't already
+   taken (`zh_hant`, `ko`, `pt_br`, ...). If an entry has no text for your language, it
+   falls back to the original Japanese.
+
+2. **Register the language** in `decomp/tools/gen_text.py`:
+   ```python
+   __CHARMAPS = {
+       'ja': ...,
+       'en_us': ...,
+       'zh_hant': lambda text: text,  # add yours (identity = no transformation)
+   }
+   __FALLBACKS = {'zh_hant': 'ja', ...}  # what to use when an entry has no text
+   ```
+
+3. **Build with your language**:
+   ```sh
+   DW1_VERSION=jp_rev1 DW1_LANG=zh_hant cargo build --workspace --release
+   ```
+
+### Font / glyph coverage (important!)
+
+The game's font is compiled into the executable (not a disc file): a 992-glyph table
+covering JIS X 0208 Level 1 kanji + kana + full-width ASCII, stored as 12×11 one-bit
+cells. Any character you write **must be in that table** or it draws as a hollow tofu box.
+
+- Characters encodable in CP932 (Shift-JIS) **and** present in the font's 992-glyph table
+  render correctly. This includes most common kanji and all kana.
+- The build fails loudly (`gen_text.py: no Shift-JIS character for ...`) if a character
+  can't be encoded at all — a useful safety net.
+- Full details, coverage percentages, and a proposal for a replaceable font pack are in
+  [docs/i18n-font-notes.md](docs/i18n-font-notes.md).
+
+### Example: the zh_hant POC
+
+```sh
+# from the repo root
+DW1_VERSION=jp_rev1 DW1_LANG=zh_hant cargo build -p dw1 --bin dw1
+DW1_DISC=/path/to/DigimonWorld.cue ./target/debug/dw1
+```
+
+The six stat labels (体力/気力/攻撃/防御/速度/精神) appear in Chinese in the stat menu.
+These are deliberately limited to glyphs the shipped font already has.
 
 ## You need your own copy of the game
 
