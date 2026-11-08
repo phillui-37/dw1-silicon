@@ -124,3 +124,19 @@ table is 11.7% of Big5 level 1 (81.7% after a Big5->JIS transcode); a full pack 
 glyph sheet plus NUM_GLYPHS/render changes, not a data swap. The zh_hant POC labels were
 re-picked (体力/気力/攻撃/防御/速度/精神) to glyphs the shipped table has - verified in the
 exe AND against the real table, so they render.
+## Task 9 (2026-11-08 20:10 JST): jp_rev1 byte-match - BLOCKED on a damaged dump
+
+The pipeline is fully proven in a root-podman Ubuntu 24.04 container (cwps4/compare.sh,
+tools preseeded in cwps4/preseed after a GitHub-CDN 504 storm; 32-bit wobo-i686 = official
+1.2.0 asset, sha256-verified, plus libc6:i386 & friends for its runtime):
+
+- dumpsxiso dumps the JP bin; `make VERSION=jp_rev1 regenerate` completes (splat over all
+  overlays); metrowrap -> wibo-i686 -> mwccwrap.exe chain executes (needs MWCIncludes and
+  WIBO := bin/wibo-i686 in local.mk, since mwccwrap.exe is PE32 i386).
+- BLOCKER: cc_mips.dll extracted from the CodeWarrior ISO is corrupt in its data region -
+  the PE parses (valid PE32 i386 DLL, 10 sections, real .text) but the .idata at file
+  0xae600 contains x86 code instead of import descriptors, so both LoadLibrary (error 193)
+  and wibo (std::length_error) fail. The damage is in the disc dump itself, not the
+  extraction (MODE1 +16 addressing is right; the PE header and early sections are intact).
+- Next step needs a clean CodeWarrior for PlayStation R4/R4.1 image or a community cc_mips
+  dll mirror; everything else in the compare path is done and scripted.
