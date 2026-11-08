@@ -84,7 +84,18 @@ fn main() {
         .join("../../decomp")
         .canonicalize()
         .expect("decomp/ submodule missing: run `git submodule update --init decomp`");
-    let workspace = manifest.join("../..").canonicalize().unwrap();
+    let decomp = unverbatim(decomp);
+    let workspace = unverbatim(manifest.join("../..").canonicalize().unwrap());
+    // Overlay data sections are Mach-O named sections with ld64's synthesised bounds on
+    // macOS, and `$`-ordered COFF groups with sentinel bounds on Windows (overlays.rs).
+    let coff = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    if coff {
+        // The setjmp/longjmp replacement calls vcruntime's _setjmp/_longjmp, and psyq's
+        // caller_address uses kernel32's CaptureStackBackTrace; the Rust MSVC target
+        // links neither by default.
+        println!("cargo:rustc-link-lib=vcruntime");
+        println!("cargo:rustc-link-lib=kernel32");
+    }
 
     let native_include = manifest.join("include");
     let psyq_include = decomp.join("external/psyq_headers/mw_lib41/include");
@@ -106,6 +117,10 @@ fn main() {
     let objects_dir = out.join("sjis");
 
     let mut build = cc::Build::new();
+    // Clang on every host: the flags below (-fwrapv & co.) are GCC/Clang flags that MSVC
+    // rejects, and on Windows clang emits COFF objects that link with the MSVC toolchain.
+    // DW1_CC overrides for unusual hosts.
+    build.compiler(std::env::var("DW1_CC").unwrap_or_else(|_| "clang".into()));
     build
         .std("gnu99")
         .warnings(true)
@@ -134,7 +149,13 @@ fn main() {
         .flag("-fno-optimize-sibling-calls")
         // Noise from matching-decomp style, not ABI hazards (docs/phase1-report.md).
         .flag("-Wno-unknown-pragmas")
-        .flag("-Wno-unused-parameter");
+        .flag("-Wno-unused-parameter")
+        // Newer clang (the Windows one here) promotes these K&R-era warnings to errors;
+        // the game C relies on the old tolerance, and the target ABI makes none of them
+        // a hazard (host pointers are 64-bit everywhere we build).
+        .flag("-fno-ms-compatibility")
+        .flag("-Wno-error=incompatible-pointer-types")
+        .flag("-Wno-error=implicit-function-declaration");
     // `DW1_SANITIZE=undefined` (or `address`, comma lists as clang takes them) compiles the game
     // C with clang's sanitizers, to find PS1-isms that don't crash at once; link the runtime with
     // `RUSTFLAGS="-C link-arg=-fsanitize=<same>"` and a separate `CARGO_TARGET_DIR`. Off by
@@ -177,7 +198,9 @@ fn main() {
                 let copy = objects_dir.join(rel);
                 fs::create_dir_all(copy.parent().unwrap()).unwrap();
                 // Diagnostics and debug info keep pointing at the original file.
-                let body = format!("#line 1 \"{}\"\n{encoded}", path.display());
+                // Backslashes in a `#line` filename are escape sequences to clang; use `/`.
+            let shown = path.display().to_string().replace('\\', "/");
+            let body = format!("#line 1 \"{shown}\"\n{encoded}");
                 write_if_changed(&copy, &body);
                 copy
             }
@@ -202,7 +225,7 @@ fn main() {
             let keeps = overlays::keeps(&defs, &resident);
             let wrapper = wrappers_dir.join(rel);
             fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
-            write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps));
+            write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps, coff));
             overlay_build.file(&wrapper);
             overlay_files.entry(unit.to_string()).or_default().push(rel.clone());
         } else {
@@ -210,14 +233,21 @@ fn main() {
         }
     }
     let bounds = out.join("overlay_bounds.c");
-    write_if_changed(&bounds, &overlays::bounds_c(&overlay_files));
+    write_if_changed(&bounds, &overlays::bounds_c(&overlay_files, coff));
     overlay_build.file(&bounds);
     build.compile("decomp");
     overlay_build.compile("decomp_overlays");
     write_if_changed(&out.join("overlays_table.rs"), &overlays::table(&overlay_files));
 
-    check_host_symbols(&out.join("libdecomp.a"));
-    check_host_symbols(&out.join("libdecomp_overlays.a"));
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        check_host_symbols(&out.join("libdecomp.a"));
+        check_host_symbols(&out.join("libdecomp_overlays.a"));
+    } else {
+        // The check reads macOS's .tbd export lists through `xcrun`. On other hosts the
+        // whole-archive link still fails on any unresolved symbol, which is the same
+        // guarantee for our purposes.
+        println!("cargo::warning=host-symbol check skipped (macOS only)");
+    }
 
     generate_bindings(&cpp_args, &out);
 
@@ -321,9 +351,23 @@ fn python(workspace: &Path) -> PathBuf {
         .unwrap_or_else(|| {
             let venv = workspace.join(".venv/bin/python");
             if venv.exists() {
-                venv
-            } else {
+                return venv;
+            }
+            let venv_win = workspace.join(".venv/Scripts/python.exe");
+            if venv_win.exists() {
+                return venv_win;
+            }
+            // Windows has no python3 outside the Store alias; probe before using it.
+            if Command::new("python3")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+            {
                 "python3".into()
+            } else {
+                "python".into()
             }
         })
 }
@@ -373,6 +417,13 @@ fn cp932_table(python: &Path, chars: impl Iterator<Item = char>) -> BTreeMap<cha
             (c, bytes)
         })
         .collect()
+}
+
+/// `canonicalize` yields `\\?\` verbatim paths on Windows, which clang's `-I` handling
+/// rejects; strip the prefix so include paths and `#line` directives stay ordinary.
+fn unverbatim(p: PathBuf) -> PathBuf {
+    let s = p.as_os_str().to_string_lossy().into_owned();
+    PathBuf::from(s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s))
 }
 
 /// Writes `path` only when its contents change, so unchanged copies don't recompile.

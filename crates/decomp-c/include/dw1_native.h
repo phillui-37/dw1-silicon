@@ -14,6 +14,18 @@
 #define DW1_NATIVE 1
 
 /*
+ * On Windows the MSVC runtime headers define size_t/wchar_t under _SIZE_T_DEFINED-style
+ * guards; Psy-Q's sys/types.h and stddef.h check _SIZE_T/_WCHAR_T instead (Apple's SDK uses
+ * those exact names, so macOS never sees a clash) and would re-typedef both at different
+ * widths. Defining the Psy-Q guards up front keeps the host's typedefs, as on macOS where
+ * size_t is already 64-bit. Set DW1_KEEP_PSYQ_TYPES to restore the Psy-Q behaviour.
+ */
+#if defined(_WIN32) && !defined(DW1_KEEP_PSYQ_TYPES)
+#define _SIZE_T
+#define _WCHAR_T
+#endif
+
+/*
  * The host's fixed-width types, read before `long` is redefined below so that intptr_t,
  * uintptr_t, int64_t and friends keep their native widths. dw/types.h includes <stdint.h>
  * again later; its include guard makes that a no-op.
