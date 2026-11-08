@@ -94,3 +94,11 @@ DigimonWorld (Japan) (Rev 1).cue:
 
 Not yet verified: actual gameplay input (needs a human at the window), and which wgpu backend
 was selected (Vulkan vs DX12) - add a backend log line if wanted.
+## Task 9 step 0 (2026-11-08 15:30 JST): cc_mips.dll extracted
+
+No InstallShield extraction was needed: the CodeWarrior ISO stores the compiler as plain
+files under /CODEWARR (the _SYS1/_USER1 CABs are only redistributables). CC_MIPS.DLL
+(759,296 bytes, SHA-1 2175392ee54c4a4aa56681b29cbdf2afd25d8c9e) is extracted from LBA 47462
+to decomp/bin/cc_mips/cc_mips_40.dll (gitignored there, as dw_decomp expects). LN_MIPS.DLL
+(the linker, 115,712 bytes) is staged at cwps4/LN_MIPS.DLL if the byte-match build wants it.
+The ISO itself is a raw 2352-byte MODE1 image misnamed .iso - extract with 2352/16 addressing.
