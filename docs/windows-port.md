@@ -114,3 +114,13 @@ The ISO itself is a raw 2352-byte MODE1 image misnamed .iso - extract with 2352/
 - Runtime caveat: a CP932 codepoint not in the JP font's codepoint table draws as the last
   glyph (font.c) - whether each kyujitai (體/禦/聰) is in the shipped table is what the
   Task 8 font spike quantifies; the stat screen itself needs a player to reach.
+## Task 8 (2026-11-08 18:40 JST): font spike findings (docs/i18n-font-notes.md)
+
+The font is not a disc TIM: it lives in the EXE (SLPS_017.97) as CHAR_TO_GLYPH_TABLE
+(0x98E90, 992 u16 codepoints, JIS rows 1-5 + kanji level 1) + GLYPH_DATA (0x99650, 992x22B
+1-bit 12x11 cells) + FONT_CLUT, expanded at runtime - and a byte-identical copy sits inside
+MOV_REL.BIN (0x47B2C), which a font pack must also patch. zh-Hant coverage with the shipped
+table is 11.7% of Big5 level 1 (81.7% after a Big5->JIS transcode); a full pack is a 116 KiB
+glyph sheet plus NUM_GLYPHS/render changes, not a data swap. The zh_hant POC labels were
+re-picked (体力/気力/攻撃/防御/速度/精神) to glyphs the shipped table has - verified in the
+exe AND against the real table, so they render.
