@@ -63,10 +63,13 @@ jobs:
 
       - name: Toolchain
         run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
           rustc --version
           cargo --version
           clang --version
           python3 --version
+          python3 -m pip install --user -q pyyaml 2>/dev/null || true
 
       - name: Build (${{ matrix.version }})
         env:
