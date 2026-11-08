@@ -1,9 +1,9 @@
 name: build
 
-# Runs on the project's own machine (a self-hosted Windows runner), not GitHub-hosted
-# runners. The machine already carries the toolchain this project needs; the job only
-# puts scoop's LLVM bin on PATH (Clang is the C compiler for the game code, and its
-# libclang serves bindgen) and Python's PyYAML, then builds and tests.
+# Runs on the project's own machines, not GitHub-hosted runners:
+# - windows: this PC's self-hosted runners (phils-pc-win / phils-pc-win-b)
+# - linux: the WSL podman-machine's self-hosted runner (phils-pc-linux), which carries
+#   the full toolchain (rustup nightly, clang, SDL3 build deps, Vulkan loader).
 on:
   push:
     branches: [windows-port, main]
@@ -36,6 +36,37 @@ jobs:
           cargo --version
           clang --version
           python --version
+
+      - name: Build (${{ matrix.version }})
+        env:
+          DW1_VERSION: ${{ matrix.version }}
+        run: cargo build --workspace --release
+
+      - name: Test (${{ matrix.version }})
+        env:
+          DW1_VERSION: ${{ matrix.version }}
+        run: cargo test --workspace
+
+  build-linux:
+    name: linux (${{ matrix.version }})
+    runs-on: [self-hosted, linux]
+    env:
+      CARGO_TERM_COLOR: always
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [us, jp_rev1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Toolchain
+        run: |
+          rustc --version
+          cargo --version
+          clang --version
+          python3 --version
 
       - name: Build (${{ matrix.version }})
         env:
