@@ -1,9 +1,9 @@
 name: build
 
 # Runs on the project's own machine (a self-hosted Windows runner), not GitHub-hosted
-# runners. The machine already carries the toolchain this project needs (rustup with the
-# nightly pinned by rust-toolchain.toml, LLVM/clang on PATH, Python 3 with PyYAML, CMake),
-# so the workflow does not install anything.
+# runners. The machine already carries the toolchain this project needs; the job only
+# puts scoop's LLVM bin on PATH (Clang is the C compiler for the game code, and its
+# libclang serves bindgen) and Python's PyYAML, then builds and tests.
 on:
   push:
     branches: [windows-port, main]
@@ -26,7 +26,12 @@ jobs:
           submodules: recursive
 
       - name: Toolchain
+        shell: pwsh
         run: |
+          $env:PATH = "$env:USERPROFILE\scoop\apps\llvm\current\bin;" + $env:PATH
+          $env:LIBCLANG_PATH = "$env:USERPROFILE\scoop\apps\llvm\current\bin"
+          "PATH={0}" -f $env:PATH | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LIBCLANG_PATH={0}" -f $env:LIBCLANG_PATH | Out-File -FilePath $env:GITHUB_ENV -Append
           rustc --version
           cargo --version
           clang --version
