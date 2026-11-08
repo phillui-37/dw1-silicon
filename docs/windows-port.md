@@ -140,3 +140,18 @@ tools preseeded in cwps4/preseed after a GitHub-CDN 504 storm; 32-bit wobo-i686 
   extraction (MODE1 +16 addressing is right; the PE header and early sections are intact).
 - Next step needs a clean CodeWarrior for PlayStation R4/R4.1 image or a community cc_mips
   dll mirror; everything else in the compare path is done and scripted.
+## Task 9 RESOLVED (2026-11-08 20:12 JST): it was MY extraction bug, not a damaged dump
+
+The "corrupt .idata" verdict is retracted. The first extraction read `size` bytes contiguously
+from the raw 2352-byte-sector image WITHOUT skipping the 304 EDC/ECC bytes per sector: the
+first 2048-byte sector (PE header) came out fine, everything after was misaligned garbage.
+Sector-wise extraction (2048 at +16 per sector) yields a perfect DLL - mwccwrap -version on
+Windows reports: "MIPS Compiler for PlayStation, Copyright c1998, Version 2.44.14 build 0".
+
+With the fixed dll, cwps4/compare.sh runs the WHOLE byte-match pipeline end to end in the
+container: dumpsxiso -> splat regenerate -> mwcc (CodeWarrior through metrowrap/wibo) builds
+all 17 binaries -> compare. Result: all 17 differ from the retail dumps - expected, since
+jype0's jp_rev1 matching is itself in progress (most differ within the first ~750 bytes,
+the battle overlays also around 0x4200). That is the baseline measurement Task 9 wanted;
+closing the gap is upstream decomp work, not port work. ISO identity for the record:
+SHA-1 edbd27984708df31190beeb9e68e5b511a3fe208, MD5 d874c79884da2e62e5b019fa7d2f15f2.
