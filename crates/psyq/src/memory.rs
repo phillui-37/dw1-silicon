@@ -102,7 +102,9 @@ pub fn link_window() -> (usize, usize) {
         let coff = unsafe { pe.add(4) };
         let (n_sections, opt_size) = unsafe {
             (
-                usize::from(coff.cast::<u16>().read_unaligned()),
+                // COFF header: Machine(2), NumberOfSections(2), TimeDateStamp(4),
+                // PointerToSymbolTable(4), NumberOfSymbols(4), SizeOfOptionalHeader(2).
+                usize::from(coff.add(2).cast::<u16>().read_unaligned()),
                 usize::from(coff.add(16).cast::<u16>().read_unaligned()),
             )
         };

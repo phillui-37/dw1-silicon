@@ -995,7 +995,17 @@ fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
         _ => std::path::Path::new("."),
     };
-    std::fs::File::open(dir)?.sync_all()
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    // Windows refuses FlushFileBuffers on a directory handle (access denied); NTFS's own
+    // journaling carries the rename, so the call is skipped rather than failing every write.
+    #[cfg(windows)]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 /// A card kept whole in one file (`card1.mcd`), the old file first kept as `<file>.bak` once
