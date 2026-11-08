@@ -325,6 +325,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/literals.rs");
     println!("cargo:rerun-if-env-changed=DW1_WARNINGS");
     println!("cargo:rerun-if-env-changed=DW1_PYTHON");
+    println!("cargo:rerun-if-env-changed=DW1_LANG");
 }
 
 /// Preprocessor setup shared by the C compiler and bindgen, so the bindings describe the C
@@ -397,8 +398,11 @@ fn c_sources(decomp: &Path, version: &str) -> Vec<(&'static str, String)> {
 }
 
 /// Runs the decomp's text generator for every `text/<dir>/<name>.yaml`, writing
-/// `<generated>/text/<dir>/<name>.h` for the selected release.
+/// `<generated>/text/<dir>/<name>.h` for the selected release. `DW1_LANG` selects another
+/// language's text (a community localization; falls back to the release's language for
+/// entries without it).
 fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path, version: &str) {
+    let lang = std::env::var("DW1_LANG").ok().filter(|s| !s.is_empty());
     let text = decomp.join("text");
     for dir in fs::read_dir(&text).unwrap() {
         let dir = dir.unwrap().path();
@@ -413,9 +417,15 @@ fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path, version
             let rel = yaml.strip_prefix(&text).unwrap().with_extension("h");
             let header = generated.join("text").join(rel);
             fs::create_dir_all(header.parent().unwrap()).unwrap();
-            let status = Command::new(python)
-                .arg(decomp.join("tools/gen_text.py"))
-                .args([version.as_ref(), yaml.as_os_str(), header.as_os_str()])
+            let mut cmd = Command::new(python);
+            cmd.arg(decomp.join("tools/gen_text.py"));
+            if let Some(lang) = &lang {
+                cmd.arg("--lang").arg(lang);
+            }
+            let status = cmd
+                .arg(version)
+                .arg(&yaml)
+                .arg(&header)
                 .status()
                 .unwrap_or_else(|e| panic!("running {}: {e} (set DW1_PYTHON)", python.display()));
             assert!(

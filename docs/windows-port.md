@@ -102,3 +102,15 @@ files under /CODEWARR (the _SYS1/_USER1 CABs are only redistributables). CC_MIPS
 to decomp/bin/cc_mips/cc_mips_40.dll (gitignored there, as dw_decomp expects). LN_MIPS.DLL
 (the linker, 115,712 bytes) is staged at cwps4/LN_MIPS.DLL if the byte-match build wants it.
 The ISO itself is a raw 2352-byte MODE1 image misnamed .iso - extract with 2352/16 addressing.
+## Task 7 (2026-11-08 18:30 JST): i18n level 1 -- DW1_LANG / gen_text --lang
+
+- gen_text.py: --lang (default: the release's language), __FALLBACKS zh_hant->ja, zh_hant
+  charmap = identity (text must be CP932-encodable; __c_string fails loudly otherwise).
+  Community contract: add `zh_hant:` keys to text yaml entries; `DW1_LANG=zh_hant` at build.
+- build.rs passes DW1_LANG through (rerun-if-env-changed).
+- POC: the six STAT_LABELS (text/main/ui.yaml) - 體力/魔力/攻勢/防禦/速度/聰明. Verified:
+  gen_text emits their CP932 octal escapes; all six byte sequences present in dw1.exe built
+  with DW1_VERSION=jp_rev1 DW1_LANG=zh_hant; build without DW1_LANG unchanged.
+- Runtime caveat: a CP932 codepoint not in the JP font's codepoint table draws as the last
+  glyph (font.c) - whether each kyujitai (體/禦/聰) is in the shipped table is what the
+  Task 8 font spike quantifies; the stat screen itself needs a player to reach.
