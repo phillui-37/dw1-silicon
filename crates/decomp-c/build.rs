@@ -86,9 +86,16 @@ fn main() {
         .expect("decomp/ submodule missing: run `git submodule update --init decomp`");
     let decomp = unverbatim(decomp);
     let workspace = unverbatim(manifest.join("../..").canonicalize().unwrap());
-    // Overlay data sections are Mach-O named sections with ld64's synthesised bounds on
-    // macOS, and `$`-ordered COFF groups with sentinel bounds on Windows (overlays.rs).
-    let coff = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    // Overlay data sections: Mach-O named sections with ld64's synthesised bounds on macOS,
+    // `$`-ordered COFF groups with sentinel bounds on Windows, identifier-named ELF sections
+    // with `__start_`/`__stop_` bounds on Linux (overlays.rs).
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let coff = target_os == "windows";
+    let section_kind = match target_os.as_str() {
+        "macos" => overlays::SectionKind::MachO,
+        "windows" => overlays::SectionKind::Coff,
+        _ => overlays::SectionKind::Elf,
+    };
     // The decomp version target: picks the version's mk file, config, text and macro.
     // Must match a `mk/version/<v>.mk`; pack::expected_sha1 covers its disc hash.
     let version = std::env::var("DW1_VERSION").unwrap_or_else(|_| "us".into());
@@ -238,7 +245,7 @@ fn main() {
             let keeps = overlays::keeps(&defs, &resident);
             let wrapper = wrappers_dir.join(rel);
             fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
-            write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps, coff));
+            write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps, section_kind));
             if coff {
                 // On COFF, no pragma places the file's *uninitialised* globals in a chosen
                 // section (clang ignores `bss_seg`/`clang section bss` there), so the
@@ -288,7 +295,7 @@ fn main() {
         }
     }
     let bounds = out.join("overlay_bounds.c");
-    write_if_changed(&bounds, &overlays::bounds_c(&overlay_files, coff));
+    write_if_changed(&bounds, &overlays::bounds_c(&overlay_files, section_kind));
     overlay_build.file(&bounds);
     build.compile("decomp");
     overlay_build.compile("decomp_overlays");

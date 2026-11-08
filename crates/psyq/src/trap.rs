@@ -33,7 +33,7 @@ pub fn unimplemented(name: &str) -> ! {
     eprintln!("{message}");
     // Which game code asked: on macOS, execinfo's symbolised frames; elsewhere the
     // standard library's backtrace prints the same callers.
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         unsafe extern "C" {
             fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;

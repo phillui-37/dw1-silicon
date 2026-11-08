@@ -177,6 +177,63 @@ fn install_crash_trace() {
     unsafe { SetUnhandledExceptionFilter(Some(on_crash)) };
 }
 
+/// The Linux counterpart: SIGSEGV/SIGBUS/SIGILL on an alternate stack, printing the
+/// stack with glibc's backtrace (not async-signal-safe, but this is a fatal-path trace
+/// like the macOS one; _exit follows immediately).
+#[cfg(target_os = "linux")]
+fn install_crash_trace() {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct SigAction {
+        handler: extern "C" fn(i32, *mut c_void, *mut c_void),
+        mask: [u64; 16],
+        flags: i32,
+        restorer: *mut c_void,
+    }
+    // glibc's sigaction wrapper installs its own restorer; SA_RESTORER must stay unset.
+    const SA_ONSTACK: i32 = 0x0800_0000;
+    const SA_RESETHAND: i32 = 0x8000_0000u32 as i32;
+    const SA_SIGINFO: i32 = 0x0000_0004;
+    const SIGSEGV: i32 = 11;
+    const SIGBUS: i32 = 7;
+    const SIGILL: i32 = 4;
+    unsafe extern "C" {
+        fn sigaction(sig: i32, act: *const SigAction, old: *mut SigAction) -> i32;
+        fn sigaltstack(ss: *const [u64; 2], old: *mut [u64; 2]) -> i32;
+        fn backtrace(buffer: *mut *mut c_void, size: i32) -> i32;
+        fn backtrace_symbols_fd(buffer: *const *mut c_void, size: i32, fd: i32);
+        fn write(fd: i32, buf: *const c_void, n: usize) -> isize;
+        fn _exit(code: i32) -> !;
+    }
+    extern "C" fn on_crash(_sig: i32, _info: *mut c_void, _uc: *mut c_void) {
+        const MSG: &[u8] = b"dw1: fatal signal; call stack:\n";
+        let mut frames = [std::ptr::null_mut::<c_void>(); 32];
+        unsafe {
+            let _ = write(2, MSG.as_ptr().cast(), MSG.len());
+            let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
+            backtrace_symbols_fd(frames.as_ptr(), n, 2);
+            _exit(139);
+        }
+    }
+    unsafe {
+        let stack = Box::leak(vec![0u8; 256 * 1024].into_boxed_slice());
+        let ss = [stack.as_mut_ptr() as u64, stack.len() as u64];
+        let act = SigAction {
+            handler: on_crash,
+            mask: [0; 16],
+            flags: SA_ONSTACK | SA_RESETHAND | SA_SIGINFO,
+            restorer: std::ptr::null_mut(),
+        };
+        if sigaltstack(&ss, std::ptr::null_mut()) != 0
+            || sigaction(SIGSEGV, &act, std::ptr::null_mut()) != 0
+            || sigaction(SIGBUS, &act, std::ptr::null_mut()) != 0
+            || sigaction(SIGILL, &act, std::ptr::null_mut()) != 0
+        {
+            eprintln!("dw1: DW1_CRASH_TRACE: could not install the handler");
+        }
+    }
+}
+
 /// Where the window build keeps the memory cards: `DW1_SAVE_DIR`, else
 /// [`default_save_dir`]; an empty `DW1_SAVE_DIR` keeps nothing.
 pub(crate) fn save_dir() -> Option<std::path::PathBuf> {

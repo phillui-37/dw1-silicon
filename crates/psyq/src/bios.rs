@@ -60,7 +60,7 @@ fn log_rand_call(value: i32) {
         "dw1: rand {value:#06x} at vblank {}",
         crate::libetc::vblank_count()
     );
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         unsafe extern "C" {
             fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;

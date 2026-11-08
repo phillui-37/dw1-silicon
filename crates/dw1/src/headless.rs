@@ -147,6 +147,34 @@ fn function_name(addr: usize) -> String {
         .into_owned()
 }
 
+/// Linux: the same execinfo call the macOS branch uses (glibc provides dladdr).
+#[cfg(target_os = "linux")]
+fn function_name(addr: usize) -> String {
+    #[repr(C)]
+    struct DlInfo {
+        fname: *const std::ffi::c_char,
+        fbase: *mut std::ffi::c_void,
+        sname: *const std::ffi::c_char,
+        saddr: *mut std::ffi::c_void,
+    }
+    unsafe extern "C" {
+        fn dladdr(addr: *const std::ffi::c_void, info: *mut DlInfo) -> i32;
+    }
+    let mut info = DlInfo {
+        fname: std::ptr::null(),
+        fbase: std::ptr::null_mut(),
+        sname: std::ptr::null(),
+        saddr: std::ptr::null_mut(),
+    };
+    let found = unsafe { dladdr((addr - 1) as *const _, &mut info) };
+    if found == 0 || info.sname.is_null() {
+        return format!("{addr:#x}");
+    }
+    unsafe { std::ffi::CStr::from_ptr(info.sname) }
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Same on Windows: dbghelp's `SymFromAddr` over this binary's own symbols. The module is
 /// initialised once; the debug build carries the symbol table, so replay reports name game
 /// functions as `dladdr` does on macOS.

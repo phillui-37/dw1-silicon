@@ -285,6 +285,15 @@ fn on_main_thread() -> bool {
     current == seen
 }
 
+/// On Linux the main thread's tid equals the pid.
+#[cfg(target_os = "linux")]
+fn on_main_thread() -> bool {
+    unsafe extern "C" {
+        fn gettid() -> i32;
+    }
+    unsafe { gettid() == std::process::id() as i32 }
+}
+
 /// The message box for a stop (when logging: an app run, on the main thread), then back to
 /// the caller, which ends the program.
 fn show_stop(message: &str) {

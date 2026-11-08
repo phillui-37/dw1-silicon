@@ -183,7 +183,7 @@ pub extern "C" fn PadRead(_id: i32) -> u32 {
 /// code), from the frame-pointer chain, which arm64 macOS always keeps.
 #[inline(never)]
 fn caller_address() -> usize {
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         unsafe extern "C" {
             fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;

@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+    branches: [windows-port, main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        version: [us, jp_rev1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev python3-pip cmake pkg-config
+          python3 -m pip install --break-system-packages pyyaml
+
+      - name: Install Windows deps
+        if: runner.os == 'Windows'
+        run: python3 -m pip install pyyaml
+
+      - name: Build (${{ matrix.version }})
+        env:
+          DW1_VERSION: ${{ matrix.version }}
+        run: cargo build --workspace --release
+
+      - name: Test (${{ matrix.version }})
+        env:
+          DW1_VERSION: ${{ matrix.version }}
+        run: cargo test --workspace

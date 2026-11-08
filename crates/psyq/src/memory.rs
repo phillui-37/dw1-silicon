@@ -135,8 +135,82 @@ pub fn link_window() -> (usize, usize) {
     })
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
-compile_error!("link_window is implemented for macOS and Windows only (ELF needs its own bounds)");
+/// The address range packet links can reach on Linux: the image base plus the union of the
+/// writable `PT_LOAD` segments (the game statics, the overlay sections, the heap arena and
+/// the PS1 RAM stand-in all live there), exactly as the PE walk does on Windows. The base
+/// comes from the lowest mapping of the executable in /proc/self/maps; the segments from
+/// the ELF headers of /proc/self/exe.
+#[cfg(target_os = "linux")]
+pub fn link_window() -> (usize, usize) {
+    use std::sync::OnceLock;
+    static WINDOW: OnceLock<(usize, usize)> = OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        let exe = std::fs::canonicalize("/proc/self/exe")
+            .expect("/proc/self/exe resolves")
+            .to_string_lossy()
+            .into_owned();
+        let maps = std::fs::read_to_string("/proc/self/maps").expect("read /proc/self/maps");
+        let mut base = usize::MAX;
+        for line in maps.lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(range), Some(_perms)) = (fields.next(), fields.next()) else {
+                continue;
+            };
+            // addr perms offset dev inode path — the path is the 6th field, if present.
+            if fields.nth(3) != Some(exe.as_str()) {
+                continue;
+            }
+            let Some((start, _end)) = range.split_once('-') else {
+                continue;
+            };
+            if let Ok(start) = usize::from_str_radix(start, 16) {
+                base = base.min(start);
+            }
+        }
+        assert!(base != usize::MAX, "no mappings of {exe} in /proc/self/maps");
+
+        let elf = std::fs::read("/proc/self/exe").expect("read /proc/self/exe");
+        assert_eq!(&elf[0..4], b"\x7fELF", "not an ELF image");
+        assert_eq!(elf[4], 2, "expected a 64-bit ELF");
+        let u16at = |off: usize| u16::from_le_bytes([elf[off], elf[off + 1]]) as usize;
+        let u64at = |off: usize| {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&elf[off..off + 8]);
+            u64::from_le_bytes(b) as usize
+        };
+        let phoff = u64at(0x20);
+        let phent = u16at(0x36);
+        let phnum = u16at(0x38);
+        let (mut lo, mut hi) = (usize::MAX, 0usize);
+        for i in 0..phnum {
+            let ph = phoff + i * phent;
+            let p_type = u32::from_le_bytes([elf[ph], elf[ph + 1], elf[ph + 2], elf[ph + 3]]);
+            let p_flags = u32::from_le_bytes([elf[ph + 4], elf[ph + 5], elf[ph + 6], elf[ph + 7]]);
+            const PT_LOAD: u32 = 1;
+            const PF_W: u32 = 2;
+            if p_type != PT_LOAD || p_flags & PF_W == 0 {
+                continue;
+            }
+            let vaddr = u64at(ph + 0x10);
+            let memsz = u64at(ph + 0x28);
+            if memsz == 0 {
+                continue;
+            }
+            lo = lo.min(base + vaddr);
+            hi = hi.max(base + vaddr + memsz);
+        }
+        assert!(lo != usize::MAX, "no writable PT_LOAD segments");
+        assert!(
+            hi - lo < LINK_END as usize,
+            "the writable segments span {:#x} bytes: too big for 24-bit packet links",
+            hi - lo
+        );
+        (lo, hi)
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+compile_error!("link_window is implemented for macOS, Linux and Windows only");
 
 /// The link to `ptr`. Stops the program if `ptr` is outside the window: a stack local or a host
 /// allocation can't be linked, and a truncated link would corrupt drawing silently.
