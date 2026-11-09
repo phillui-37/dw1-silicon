@@ -3,12 +3,15 @@
 //! For now (Phase 2) the whole game C is linked and its `main()` runs until the first SDK call
 //! with no Rust implementation, which stops the program with that call's name.
 
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 
 mod applog;
 mod canon;
 mod disc;
 mod headless;
+mod launch;
 mod pc_text;
 mod replay;
 mod saves;
@@ -511,7 +514,11 @@ fn lock_save_dir(dir: &std::path::Path) {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let console_requested = args.iter().any(|a| a == "--console");
+    args.retain(|a| a != "--console");
+    launch::init_console(console_requested);
+    let settings_only = args.iter().any(|a| a == "--settings");
     if card_command(&args) {
         return;
     }
@@ -528,8 +535,11 @@ fn main() {
         // A movie number, where 0 (the intro) is a value, not "off".
         || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
     // An app run (no terminal) writes to a log; the window build shows stops in message boxes.
-    let crashed_before = applog::start(!headless);
-    if std::env::var_os("DW1_CRASH_TRACE").is_some() || applog::bundled() {
+    let crashed_before = applog::start(!headless, console_requested);
+    if std::env::var_os("DW1_CRASH_TRACE").is_some()
+        || applog::bundled()
+        || (!headless && !console_requested)
+    {
         install_crash_trace();
     }
     // The disc before the saves: the slots' text patches (`pc_text`) read it. The window build
@@ -549,6 +559,7 @@ fn main() {
                 if let Some(log) = crashed_before {
                     applog::report_earlier_crash(&log);
                 }
+                if settings_only { w.settings_screen(); return; }
                 let disc = w.find_disc(disc::at_startup());
                 psyq::libcd::insert_disc(disc);
                 window = Some(w);

@@ -27,7 +27,19 @@ pub struct Settings {
     pub full_colour: bool,
     pub fit: Fit,
     pub fullscreen: bool,
+    pub volume: u8,
+    pub window_mode: WindowMode,
+    pub window_size: u8,
+    pub keyboard_bindings: [i32; 16],
+    pub gamepad_bindings: [i32; 16],
+    pub input_mode: InputMode,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowMode { Windowed, Borderless, Exclusive }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputMode { Auto, Keyboard, Gamepad }
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -37,6 +49,12 @@ impl Default for Settings {
             full_colour: true,
             fit: Fit::Integer,
             fullscreen: false,
+            volume: 100,
+            window_mode: WindowMode::Windowed,
+            window_size: 2,
+            keyboard_bindings: [29, 27, 4, 22, 40, 229, 20, 26, 30, 31, 82, 79, 81, 80, 0, 0],
+            gamepad_bindings: [1, 2, 3, 4, 7, 5, 10, 11, 109, 111, 12, 15, 13, 14, 0, 0],
+            input_mode: InputMode::Auto,
         }
     }
 }
@@ -48,6 +66,12 @@ const STEPS: [u32; 6] = [1, 2, 3, 4, 6, 8];
 /// per window pixel: the shown height over the PS1's 240 lines, rounded up, 1 to 8.
 pub fn auto_scale(shown_h: u32) -> u32 {
     shown_h.div_ceil(render::BASE.1).clamp(1, 8)
+}
+
+fn parse_bindings(value: &str, key: &str) -> Result<[i32; 16], String> {
+    let values: Vec<i32> = value.split(',').map(|v| v.trim().parse::<i32>())
+        .collect::<Result<_, _>>().map_err(|_| format!("{key} must contain 16 integer codes"))?;
+    values.try_into().map_err(|_| format!("{key} must contain 16 integer codes"))
 }
 
 impl Settings {
@@ -62,9 +86,14 @@ impl Settings {
     pub fn load(path: Option<&Path>) -> (Settings, Settings) {
         let mut s = Settings::default();
         if let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) {
+            let has_window_mode = text.lines().filter_map(|line| line.split('#').next())
+                .filter_map(|line| line.split_once('='))
+                .any(|(key, _)| key.trim() == "window_mode");
             for problem in s.parse(&text) {
                 eprintln!("dw1: settings: {problem}");
             }
+            // Read settings made by older builds, where fullscreen was the only display flag.
+            if !has_window_mode && s.fullscreen { s.window_mode = WindowMode::Exclusive; }
         }
         let mut used = s;
         used.apply_env(|k| std::env::var(k).ok());
@@ -106,6 +135,12 @@ impl Settings {
                     },
                 }
             }
+            "volume" => self.volume = value.parse::<u8>().ok().filter(|v| *v <= 100).ok_or_else(|| format!("volume is 0 to 100, not {value:?}"))?,
+            "window_size" => self.window_size = value.parse::<u8>().ok().filter(|v| *v < 5).ok_or_else(|| format!("window_size is 0 to 4, not {value:?}"))?,
+            "keyboard_bindings" => self.keyboard_bindings = parse_bindings(value, key)?,
+            "gamepad_bindings" => self.gamepad_bindings = parse_bindings(value, key)?,
+            "input_mode" => self.input_mode = match value { "auto" => InputMode::Auto, "keyboard" => InputMode::Keyboard, "gamepad" => InputMode::Gamepad, _ => return Err(format!("input_mode is auto, keyboard or gamepad, not {value:?}")) },
+            "window_mode" => self.window_mode = match value { "windowed" => WindowMode::Windowed, "borderless" => WindowMode::Borderless, "exclusive" => WindowMode::Exclusive, _ => return Err(format!("invalid window_mode {value:?}")) },
             "no_wobble" => self.no_wobble = bool_of(value)?,
             "full_colour" => self.full_colour = bool_of(value)?,
             "fullscreen" => self.fullscreen = bool_of(value)?,
@@ -147,6 +182,8 @@ impl Settings {
             Fit::Fill => "fill",
             _ => "integer",
         };
+        let keyboard = self.keyboard_bindings.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+        let gamepad = self.gamepad_bindings.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
         format!(
             "# dw1-silicon picture settings. Changed in the game: F2 render scale, F3 no wobble,\n\
              # F4 fit, F5 full colour, F11 fullscreen. Delete this file for the defaults.\n\
@@ -168,8 +205,17 @@ impl Settings {
              # original look). fill: as large as the window allows at 4:3 (an addition).\n\
              fit = {fit}\n\
              \n\
-             fullscreen = {}\n",
-            self.no_wobble, self.full_colour, self.fullscreen
+             fullscreen = {}\n\
+             volume = {}\n\
+             window_mode = {}\n\
+             window_size = {}\n\
+             keyboard_bindings = {keyboard}\n\
+             gamepad_bindings = {gamepad}\n\
+             input_mode = {}\n\
+",
+            self.no_wobble, self.full_colour, self.fullscreen, self.volume,
+            match self.window_mode { WindowMode::Windowed => "windowed", WindowMode::Borderless => "borderless", WindowMode::Exclusive => "exclusive" }, self.window_size,
+            match self.input_mode { InputMode::Auto => "auto", InputMode::Keyboard => "keyboard", InputMode::Gamepad => "gamepad" }
         )
     }
 
@@ -224,10 +270,16 @@ mod tests {
             full_colour: false,
             fit: Fit::Fill,
             fullscreen: true,
+            ..Settings::default()
         };
         let mut t = Settings::default();
-        assert!(t.parse(&s.to_text()).is_empty());
+        let problems = t.parse(&s.to_text());
+        assert!(problems.is_empty(), "{problems:?}\n{}", s.to_text());
         assert_eq!(t, s);
+        let mut device = Settings::default();
+        assert!(device.parse("input_mode = gamepad\nvolume = 35\n").is_empty());
+        assert_eq!(device.input_mode, InputMode::Gamepad);
+        assert_eq!(device.volume, 35);
         let mut d = Settings::default();
         assert!(d.parse(&Settings::default().to_text()).is_empty());
         assert_eq!(d, Settings::default());

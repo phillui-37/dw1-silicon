@@ -2,17 +2,18 @@
 //! PS1's field rate, with the keyboard and gamepads as the pad. SDL3 keeps the window, input and
 //! sound.
 //!
-//! Keys (physical positions, so other layouts work): arrows = D-pad, Z = Cross, X = Circle,
-//! A = Square, S = Triangle, Enter = Start, right Shift = Select, Q/W = L1/R1, 1/2 = L2/R2.
+//! Keys (physical positions, so other layouts work) are configurable in host settings. Defaults:
+//! arrows = D-pad, Z/X/A/S = Cross/Circle/Square/Triangle, Enter = Start, right Shift = Select,
+//! Q/W = L1/R1, 1/2 = L2/R2.
 //! Gamepads use SDL's standard layout (south = Cross, east = Circle, west = Square,
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
 //! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
 //! display size (first frame, on size changes, then every 60 frames).
 //!
-//! Picture settings (`settings.rs`, kept between runs; a note in the corner says what changed
-//! and whether it's original or an addition): F2 render scale (auto, 1, 2, 3, 4, 6, 8), F3 no
-//! wobble, F4 fit (integer, the original look, or fill at 4:3), F5 full colour, F11 or
-//! Cmd-Ctrl-F fullscreen. F12 writes a bug snapshot (`snapshot.rs`).
+//! Host settings: F1 opens the volume, 4:3 window/display mode, keyboard/gamepad choice and
+//! configurable bindings menu. Settings persist between runs. F2 render scale (auto, 1, 2, 3, 4,
+//! 6, 8), F3 no wobble, F4 fit, F5 full colour and F11 fullscreen remain available in play.
+//! F12 writes a bug snapshot (`snapshot.rs`).
 //!
 //! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
 //! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
@@ -26,7 +27,7 @@ use sdl3::pixels::PixelFormat;
 use sdl3::render::Canvas;
 use sdl3::surface::Surface;
 
-use crate::settings::{Scale, Settings};
+use crate::settings::{InputMode, Scale, Settings, WindowMode};
 use sdl3::EventPump;
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::Event;
@@ -36,6 +37,7 @@ use sdl3::keyboard::{Mod, Scancode};
 mod disc_picker;
 mod snapshot;
 mod splash;
+mod settings_ui;
 
 /// The PS1's NTSC non-interlaced field rate: 53.693175 MHz / (3413 x 263) = 59.817 Hz
 /// [doc: psx-spx GPU timings; PLAN.md's "Timing is measured", docs/s08-oracle.md]. Redux, the
@@ -104,7 +106,9 @@ const UP: u32 = 1 << 12;
 const RIGHT: u32 = 1 << 13;
 const DOWN: u32 = 1 << 14;
 const LEFT: u32 = 1 << 15;
+const PAD_ACTIONS: [u32; 14] = [CROSS, CIRCLE, SQUARE, TRIANGLE, START, SELECT, L1, R1, L2, R2, UP, RIGHT, DOWN, LEFT];
 
+#[cfg(test)]
 pub fn key_bit(key: Scancode) -> u32 {
     match key {
         Scancode::Up => UP,
@@ -125,6 +129,33 @@ pub fn key_bit(key: Scancode) -> u32 {
     }
 }
 
+fn binding_bits(bindings: &[i32; 16], matches: impl Fn(i32) -> bool) -> u32 {
+    bindings.iter().take(PAD_ACTIONS.len()).enumerate().fold(0, |bits, (index, &code)| {
+        if code != 0 && matches(code) { bits | PAD_ACTIONS[index] } else { bits }
+    })
+}
+
+fn axis_binding_bits(axis: Axis, value: i16, bindings: &[i32; 16]) -> u32 {
+    let index = axis as i32;
+    binding_bits(bindings, |code| {
+        let custom_axis = code == 100 + index * 2 && value < -AXIS_THRESHOLD
+            || code == 101 + index * 2 && value > AXIS_THRESHOLD;
+        let default_stick = match (axis, value < -AXIS_THRESHOLD, value > AXIS_THRESHOLD) {
+            (Axis::LeftX, true, _) => code == Button::DPadLeft as i32 + 1,
+            (Axis::LeftX, _, true) => code == Button::DPadRight as i32 + 1,
+            (Axis::LeftY, true, _) => code == Button::DPadUp as i32 + 1,
+            (Axis::LeftY, _, true) => code == Button::DPadDown as i32 + 1,
+            _ => false,
+        };
+        custom_axis || default_stick
+    })
+}
+
+fn key_binding_bits(key: Scancode, bindings: &[i32; 16]) -> u32 {
+    binding_bits(bindings, |code| code == key as i32)
+}
+
+#[cfg(test)]
 pub fn button_bit(button: Button) -> u32 {
     match button {
         Button::DPadUp => UP,
@@ -147,6 +178,7 @@ const AXIS_THRESHOLD: i16 = 16_000;
 
 /// Bits an axis contributes at `value` (both directions of a stick axis are reported, so the
 /// result is the whole set for that axis).
+#[cfg(test)]
 pub fn axis_bits(axis: Axis, value: i16) -> u32 {
     let hi = value > AXIS_THRESHOLD;
     let lo = value < -AXIS_THRESHOLD;
@@ -180,16 +212,18 @@ pub struct PadState {
 }
 
 impl PadState {
-    pub fn button(&mut self, button: Button, down: bool) {
+    pub fn button(&mut self, button: Button, down: bool, bindings: &[i32; 16]) {
+        let code = button as i32 + 1;
+        let mapped = binding_bits(bindings, |binding| binding == code);
         if down {
-            self.buttons |= button_bit(button);
+            self.buttons |= mapped;
         } else {
-            self.buttons &= !button_bit(button);
+            self.buttons &= !mapped;
         }
     }
 
-    pub fn axis(&mut self, axis: Axis, value: i16) {
-        self.axes.insert(axis as i32, axis_bits(axis, value));
+    pub fn axis(&mut self, axis: Axis, value: i16, bindings: &[i32; 16]) {
+        self.axes.insert(axis as i32, axis_binding_bits(axis, value, bindings));
     }
 
     pub fn bits(&self) -> u32 {
@@ -430,6 +464,11 @@ impl Window {
             .build()
             .map_err(|e| e.to_string())?;
         let (pw, ph) = window.size_in_pixels();
+        // SDL expects min/max WIDTH ? HEIGHT. Passing width and height here (4, 3)
+        // accidentally clamps the window to 4:1.
+        unsafe {
+            sdl3::sys::video::SDL_SetWindowAspectRatio(window.raw(), 4.0 / 3.0, 4.0 / 3.0);
+        }
         // SAFETY: the renderer is dropped before the window (field order in `Window`).
         let renderer = unsafe { Renderer::for_window(&window, pw, ph)? };
         let settings_path = Settings::path();
@@ -465,6 +504,8 @@ impl Window {
             gate: ShowGate::default(),
         };
         w.refresh_ns = refresh_ns(&w.window);
+        w.apply_window_settings();
+        w.apply_audio_settings();
         if w.settings.fullscreen {
             w.set_fullscreen(true);
         }
@@ -473,6 +514,56 @@ impl Window {
         }
         Ok(w)
     }
+
+    fn apply_window_settings(&mut self) {
+        let sizes = [(640, 480), (800, 600), (960, 720), (1280, 960), (1600, 1200)];
+        let (sw, sh) = sizes[self.settings.window_size.min(4) as usize];
+        let _ = self.window.set_minimum_size(320, 240);
+        match self.settings.window_mode {
+            WindowMode::Windowed => {
+                let _ = self.window.set_fullscreen(false);
+                let _ = self.window.set_bordered(true);
+                let _ = self.window.restore();
+                let _ = self.window.set_size(sw, sh);
+                unsafe { sdl3::sys::video::SDL_SetWindowAspectRatio(self.window.raw(), 4.0 / 3.0, 4.0 / 3.0); }
+            }
+            WindowMode::Borderless => {
+                let _ = self.window.set_fullscreen(false);
+                let _ = self.window.set_bordered(false);
+                unsafe { sdl3::sys::video::SDL_SetWindowAspectRatio(self.window.raw(), 0.0, 0.0); }
+                let _ = self.window.maximize();
+            }
+            WindowMode::Exclusive => {
+                let _ = self.window.set_bordered(true);
+                unsafe {
+                    sdl3::sys::video::SDL_SetWindowAspectRatio(self.window.raw(), 0.0, 0.0);
+                    // Prefer a real 4:3 exclusive mode on displays that expose one.
+                    if let Ok(display) = self.window.get_display() {
+                        if let Ok(modes) = display.get_fullscreen_modes() {
+                            if let Some(mode) = modes.into_iter()
+                                .filter(|m| m.w > 0 && m.h > 0 && (m.w as f32 / m.h as f32 - 4.0 / 3.0).abs() < 0.01)
+                                .min_by_key(|m| (m.w - 960).abs() + (m.h - 720).abs())
+                            {
+                                let raw = mode.to_ll();
+                                let _ = sdl3::sys::video::SDL_SetWindowFullscreenMode(self.window.raw(), &raw);
+                            } else {
+                                let _ = sdl3::sys::video::SDL_SetWindowFullscreenMode(self.window.raw(), std::ptr::null());
+                            }
+                        }
+                    }
+                }
+                self.set_fullscreen(true);
+            }
+        }
+    }
+
+    fn apply_audio_settings(&self) {
+        if let Some(stream) = &self._audio {
+            unsafe { sdl3::sys::audio::SDL_SetAudioStreamGain(stream.raw(), self.settings.volume as f32 / 100.0); }
+        }
+    }
+
+    pub fn settings_screen(&mut self) { self.settings_ui(); }
 
     fn open_gamepad(&mut self, id: sdl3::joystick::JoystickId) {
         if let Ok(g) = self.gamepad_sys.open(id) {
@@ -505,6 +596,7 @@ impl Window {
                 let cmd_ctrl = keymod.intersects(Mod::LGUIMOD | Mod::RGUIMOD)
                     && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
                 match k {
+                    Scancode::F1 => self.settings_ui(),
                     Scancode::F2 => self.change(Note::Scale, |s| s.next_scale()),
                     Scancode::F3 => self.change(Note::Wobble, |s| s.no_wobble = !s.no_wobble),
                     Scancode::F5 => {
@@ -520,12 +612,16 @@ impl Window {
                     Scancode::F11 => self.toggle_fullscreen(),
                     Scancode::F12 => self.bug_snapshot(),
                     Scancode::F if cmd_ctrl => self.toggle_fullscreen(),
-                    _ => self.keys |= key_bit(k),
+                    _ => {
+                        if self.settings.input_mode != InputMode::Gamepad {
+                            self.keys |= key_binding_bits(k, &self.settings.keyboard_bindings);
+                        }
+                    }
                 }
             }
-            Event::KeyUp {
-                scancode: Some(k), ..
-            } => self.keys &= !key_bit(k),
+            Event::KeyUp { scancode: Some(k), .. } => {
+                self.keys &= !key_binding_bits(k, &self.settings.keyboard_bindings);
+            }
             Event::Window {
                 win_event: sdl3::event::WindowEvent::DisplayChanged(_),
                 ..
@@ -543,20 +639,24 @@ impl Window {
                 self.pads.remove(&which);
             }
             Event::GamepadButtonDown { which, button, .. } => {
-                self.pads.entry(which).or_default().button(button, true)
+                self.pads.entry(which).or_default().button(button, true, &self.settings.gamepad_bindings)
             }
             Event::GamepadButtonUp { which, button, .. } => {
-                self.pads.entry(which).or_default().button(button, false)
+                self.pads.entry(which).or_default().button(button, false, &self.settings.gamepad_bindings)
             }
-            Event::GamepadAxisMotion {
-                which, axis, value, ..
-            } => self.pads.entry(which).or_default().axis(axis, value),
+            Event::GamepadAxisMotion { which, axis, value, .. } => {
+                // Keep physical state fresh even in keyboard-only mode, so switching devices
+                // while a stick is held cannot reintroduce a stale direction.
+                self.pads.entry(which).or_default().axis(axis, value, &self.settings.gamepad_bindings)
+            }
             _ => {}
         }
     }
 
     fn held_pad(&self) -> u32 {
-        self.pads.values().fold(self.keys, |a, p| a | p.bits())
+        let keyboard = if self.settings.input_mode == InputMode::Gamepad { 0 } else { self.keys };
+        if self.settings.input_mode == InputMode::Keyboard { keyboard }
+        else { self.pads.values().fold(keyboard, |a, p| a | p.bits()) }
     }
 
     /// A hotkey changed a setting: keep it (that setting only: the others keep what the file
@@ -569,7 +669,7 @@ impl Window {
             Note::Wobble => k.no_wobble = s.no_wobble,
             Note::FullColour => k.full_colour = s.full_colour,
             Note::Fit => k.fit = s.fit,
-            Note::Fullscreen => k.fullscreen = s.fullscreen,
+            Note::Fullscreen => { k.fullscreen = s.fullscreen; k.window_mode = s.window_mode; },
             Note::Message => {}
         }
         self.kept.save(self.settings_path.as_deref());
@@ -588,7 +688,9 @@ impl Window {
             sdl3::video::FullscreenType::True | sdl3::video::FullscreenType::Desktop
         );
         self.set_fullscreen(on);
-        self.change(Note::Fullscreen, |s| s.fullscreen = on);
+        self.settings.fullscreen = on;
+        self.settings.window_mode = if on { WindowMode::Exclusive } else { WindowMode::Windowed };
+        self.change(Note::Fullscreen, |_| {});
     }
 
     /// Fullscreen on or off. SDL changes it asynchronously on macOS (an animation); waiting for
@@ -632,6 +734,7 @@ impl Window {
         note: Option<(Picture, u32, u32)>,
     ) -> (u32, u32) {
         let (pw, ph) = window.size_in_pixels();
+
         renderer.resize(pw, ph);
         renderer.present(picture, fit, note);
         (pw, ph)
@@ -818,15 +921,40 @@ mod tests {
         assert_eq!(axis_bits(Axis::TriggerRight, 30000), R2);
 
         // A centred stick doesn't release a held D-pad direction, nor the other way round.
+        let bindings = Settings::default().gamepad_bindings;
         let mut p = PadState::default();
-        p.button(Button::DPadLeft, true);
-        p.axis(Axis::LeftX, 100);
+        p.button(Button::DPadLeft, true, &bindings);
+        p.axis(Axis::LeftX, 100, &bindings);
         assert_eq!(p.bits(), LEFT);
-        p.axis(Axis::LeftX, -20000);
-        p.button(Button::DPadLeft, false);
+        p.axis(Axis::LeftX, -20000, &bindings);
+        p.button(Button::DPadLeft, false, &bindings);
         assert_eq!(p.bits(), LEFT);
-        p.axis(Axis::LeftX, 0);
+        p.axis(Axis::LeftX, 0, &bindings);
         assert_eq!(p.bits(), 0);
+
+        // Default face buttons and triggers keep their expected PS1 actions.
+        assert_eq!(binding_bits(&bindings, |code| code == Button::South as i32 + 1), CROSS);
+        assert_eq!(axis_binding_bits(Axis::TriggerLeft, 20_000, &bindings), L2);
+        assert_eq!(axis_binding_bits(Axis::TriggerRight, 20_000, &bindings), R2);
+
+        // A user remap is what PadRead receives, not the hard-coded face-button layout.
+        let mut custom = bindings;
+        custom[0] = Button::East as i32 + 1;
+        let mut remapped = PadState::default();
+        remapped.button(Button::East, true, &custom);
+        assert_eq!(remapped.bits(), CROSS | CIRCLE);
+        remapped.button(Button::East, false, &custom);
+        assert_eq!(remapped.bits(), 0);
+    }
+
+    #[test]
+    fn keyboard_bindings_are_configurable() {
+        let defaults = Settings::default();
+        assert_eq!(key_binding_bits(Scancode::Z, &defaults.keyboard_bindings), CROSS);
+        let mut keys = defaults.keyboard_bindings;
+        keys[0] = Scancode::P as i32;
+        assert_eq!(key_binding_bits(Scancode::P, &keys), CROSS);
+        assert_eq!(key_binding_bits(Scancode::Z, &keys), 0);
     }
 
     #[test]
