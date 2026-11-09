@@ -246,6 +246,7 @@ pub struct Window {
     pad_log: snapshot::PadLog,
     note_buf: Vec<u32>,
     pump: EventPump,
+    update_check: Option<crate::update::UpdateCheck>,
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
     keys: u32,
@@ -487,6 +488,7 @@ impl Window {
             pad_log: snapshot::PadLog::default(),
             note_buf: Vec::new(),
             pump,
+            update_check: None,
             gamepad_sys,
             gamepads: Vec::new(),
             keys: 0,
@@ -563,6 +565,10 @@ impl Window {
         }
     }
 
+    pub fn set_update_check(&mut self, check: Option<crate::update::UpdateCheck>) {
+        self.update_check = check;
+    }
+
     pub fn settings_screen(&mut self) { self.settings_ui(); }
 
     fn open_gamepad(&mut self, id: sdl3::joystick::JoystickId) {
@@ -575,6 +581,18 @@ impl Window {
         let events: Vec<Event> = self.pump.poll_iter().collect();
         for ev in events {
             self.handle(ev);
+        }
+        match crate::update::poll_once(&mut self.update_check) {
+            crate::update::CheckPoll::Pending => {}
+            crate::update::CheckPoll::Complete(Some(Ok(result))) => {
+                crate::update::prompt(result, &self.window);
+            }
+            crate::update::CheckPoll::Complete(Some(Err(error))) => {
+                eprintln!("dw1: release check failed: {error}");
+            }
+            crate::update::CheckPoll::Complete(None) => {
+                eprintln!("dw1: release check stopped before returning a result");
+            }
         }
     }
 

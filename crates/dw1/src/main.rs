@@ -16,6 +16,7 @@ mod pc_text;
 mod replay;
 mod saves;
 mod settings;
+mod update;
 mod window;
 
 /// The disc for headless runs and the card commands: `DW1_DISC`, else
@@ -534,6 +535,7 @@ fn main() {
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"))
         // A movie number, where 0 (the intro) is a value, not "off".
         || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
+    let update_check = if !headless && !settings_only { Some(update::start()) } else { None };
     // An app run (no terminal) writes to a log; the window build shows stops in message boxes.
     let crashed_before = applog::start(!headless, console_requested);
     if std::env::var_os("DW1_CRASH_TRACE").is_some()
@@ -587,6 +589,7 @@ fn main() {
             if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {
                 w.splash();
             }
+            w.set_update_check(update_check);
             psyq::libetc::set_host(Box::new(w));
         }
     }

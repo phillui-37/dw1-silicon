@@ -126,6 +126,8 @@ memory cards.
 the picture settings, saves and moving them to and from DuckStation, and what to do when
 something goes wrong.
 
+[Release update check](docs/release-check.md) explains how the desktop app checks for updates.
+
 ## Community localization (i18n)
 
 The game's text lives in YAML files under `decomp/text/**/*.yaml`, already keyed per language:
