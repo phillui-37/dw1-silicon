@@ -1,7 +1,7 @@
 [package]
 name = "dw1"
 description = "Digimon World as a native Apple Silicon app"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
