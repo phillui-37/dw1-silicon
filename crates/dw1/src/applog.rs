@@ -1,12 +1,9 @@
-//! Where an app run's messages go (Phase 9.2). Opened from Finder the app has no terminal, so
-//! when it runs from a `.app` bundle (or with `DW1_LOG=1`) everything it prints goes to
-//! `~/Library/Logs/dw1-silicon/dw1-<UTC time>.log` (the newest `KEEP` are kept), the crash trace
-//! is on, and in the window build a stop shows a message box naming the log (the PS1 layer's
-//! `trap::stop`, a panic, `fatal`). A crash can't show anything, so a window run leaves a
-//! `running-<log name>` marker that any orderly exit removes (an `atexit` handler). A run holds
-//! a lock on its log while it lasts, so the next start knows a marker whose log is unlocked
-//! is a run that ended without exiting (an abort, a signal), says so, and only then removes the
-//! marker. Headless runs only log.
+//! Diagnostics for desktop runs. Graphical launches write stdout/stderr (including C
+//! printf) to per-user logs: Library/Logs/dw1-silicon on macOS, LocalAppData/dw1-silicon/logs
+//! on Windows, and XDG_DATA_HOME/dw1-silicon/logs on Linux. `--console` keeps terminal output;
+//! `DW1_LOG=1` explicitly requests a log. The newest `KEEP` logs are retained. Interactive
+//! stops show a message box with the log path. Running markers and file locks distinguish
+//! an interrupted run from one that is still active; orderly exits remove their marker.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -36,12 +33,13 @@ fn log_dir() -> Option<PathBuf> {
     return dirs::data_local_dir().map(|d| d.join("dw1-silicon/logs"));
 }
 
-/// Starts logging when bundled (or `DW1_LOG=1`); `interactive`: the window build (message
+/// Starts logging for GUI runs (or `DW1_LOG=1`); `--console` keeps terminal diagnostics.
+/// `interactive`: the window build (message
 /// boxes, a marker). Returns the log of an earlier window run that ended without an orderly
 /// exit, if any (for `report_earlier_crash`).
-pub fn start(interactive: bool) -> Option<PathBuf> {
-    let wanted =
-        bundled() || std::env::var_os("DW1_LOG").is_some_and(|v| !v.is_empty() && v != "0");
+pub fn start(interactive: bool, console: bool) -> Option<PathBuf> {
+    let wanted = ((interactive || bundled()) && !console)
+        || std::env::var_os("DW1_LOG").is_some_and(|v| !v.is_empty() && v != "0");
     if !wanted {
         return None;
     }
@@ -134,6 +132,10 @@ fn redirect(f: &std::fs::File) {
         fn _open_osfhandle(osfhandle: isize, flags: i32) -> i32;
         fn _dup2(from: i32, to: i32) -> i32;
     }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetStdHandle(which: u32, handle: *mut std::ffi::c_void) -> i32;
+    }
     const O_WRONLY: i32 = 1;
     // SAFETY: `f` is open for writing; its handle backs a descriptor that replaces 1 and 2
     // for the rest of the run (the descriptor is never closed, like the dup above).
@@ -141,6 +143,9 @@ fn redirect(f: &std::fs::File) {
         let fd = _open_osfhandle(f.as_raw_handle() as isize, O_WRONLY);
         _dup2(fd, 1);
         _dup2(fd, 2);
+        // Rust uses the Win32 handles directly; GUI-subsystem processes may have none.
+        SetStdHandle((-11i32) as u32, f.as_raw_handle());
+        SetStdHandle((-12i32) as u32, f.as_raw_handle());
     }
 }
 

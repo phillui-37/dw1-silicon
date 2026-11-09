@@ -47,6 +47,11 @@ jobs:
           DW1_VERSION: ${{ matrix.version }}
         run: cargo test --workspace
 
+      - name: Test Windows desktop launch
+        env:
+          DW1_TEST_BINARY: target/release/dw1.exe
+        run: python -m unittest discover -s tools -p test_windows_launch.py -v
+
   build-linux:
     name: linux (${{ matrix.version }})
     runs-on: [self-hosted, linux]
@@ -80,3 +85,6 @@ jobs:
         env:
           DW1_VERSION: ${{ matrix.version }}
         run: cargo test --workspace
+
+      - name: Test Linux desktop launcher
+        run: python3 -m unittest discover -s tools -p test_install_desktop.py -v

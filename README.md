@@ -91,9 +91,34 @@ The first start asks for your disc image in a file dialog, or set the environmen
 `DW1_DISC=/path/to/DigimonWorld.cue` to skip the dialog. The image's hash is checked before
 the game starts.
 
-Options in play: **F2** render scale (auto from window size), **F3** no texture wobble
-(PGXP), **F4** fit-to-window, **F5** full colour, **F11** fullscreen, **F12** bug snapshot.
-Saves go to `%APPDATA%\dw1-silicon` (Windows), `~/.config/dw1-silicon` (Linux), or
+Desktop launches do not open a console window. On Windows, double-click `dw1.exe`; on
+macOS build the existing `.app` with `tools/make-app.sh`. On Linux, build the binary and
+register an application-menu entry (including a Settings action):
+
+```sh
+python3 tools/install-desktop.py target/release/dw1
+```
+
+The Linux entry uses `Terminal=false` and points to the selected binary; rerun the installer
+if you move it. GUI runs write diagnostics to the per-user log directory. Use
+`dw1.exe --console` (Windows) or `./dw1 --console` (Linux/macOS) for terminal diagnostics;
+Windows reuses a parent console or creates one only when explicitly requested. Existing
+headless environment flags and memory-card commands still work from a terminal. A terminal
+you explicitly started remains open; the application does not close another process's shell.
+
+Press **F1** while playing to open host settings; the same settings screen can be opened before
+loading a disc with `dw1.exe --settings`. It controls volume, windowed/borderless/fullscreen mode,
+common window sizes and input device. Windowed sizes range from 640x480 to 1600x1200; the window
+keeps a 4:3 ratio as you resize it, and the game image stays 4:3 in every display mode. Settings
+persist in the app's settings file. In the settings screen use Up/Down to choose, Left/Right to
+change and Enter to select. Configure each keyboard or gamepad action with Enter; press a key,
+controller button, stick direction or trigger to bind it. Escape cancels, Backspace restores the
+default for that action, and Delete clears it. The input option supports keyboard only, gamepad
+only or both. The gamepad is also added or removed without restarting the game.
+
+Options in play: **F1** host settings, **F2** render scale (auto from window size), **F3** no
+texture wobble (PGXP), **F4** fit-to-window, **F5** full colour, **F11** fullscreen, **F12** bug
+snapshot. Saves go to `%APPDATA%\dw1-silicon` (Windows), `~/.config/dw1-silicon` (Linux), or
 `~/Library/Application Support/dw1-silicon` (macOS), and are interchangeable with DuckStation
 memory cards.
 

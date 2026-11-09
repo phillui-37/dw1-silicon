@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Digimon World
+Comment=Play Digimon World from your own disc image
+Exec=/usr/bin/env @EXEC@
+Icon=dw1-silicon
+Terminal=false
+Categories=Game;RolePlaying;
+Actions=Settings;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=/usr/bin/env @EXEC@ --settings
